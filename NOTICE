@@ -1,0 +1,23 @@
+cluster3d-core
+Copyright 2026 Mike Nelson and contributors.
+
+This product includes software adapted from QP-CAT
+(qupath-extension-cell-analysis-tools), which is licensed under the
+Apache License, Version 2.0.
+
+The following classes in this library are adaptations of QP-CAT source:
+
+  qupath.ext.cluster3d.service.ViewerNavigator
+      adapted from qupath.ext.qpcat.service.ViewerNavigator
+  qupath.ext.cluster3d.service.CellCropService
+      adapted from qupath.ext.qpcat.service.CellCropService
+  qupath.ext.cluster3d.model.CellRef
+      adapted from qupath.ext.qpcat.model.CellRef
+  qupath.ext.cluster3d.ui.ProjectImageSelector
+      adapted from qupath.ext.qpcat.ui.ProjectImageSelector
+  qupath.ext.cluster3d.ui.PointCloudView
+      Canvas interaction idioms adapted from
+      qupath.ext.qpcat.ui.EmbeddingScatterPanel
+
+QP-CAT is developed at the Laboratory for Optical and Computational
+Instrumentation (LOCI), University of Wisconsin-Madison.
