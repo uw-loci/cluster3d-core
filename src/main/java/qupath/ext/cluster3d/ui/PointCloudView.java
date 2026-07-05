@@ -126,6 +126,7 @@ public class PointCloudView extends Pane {
     private double pointSize = 2.0;
     private boolean depthCue = true;
     private boolean showTripod = true;
+    private Color backgroundColor = null; // null = auto (match QuPath theme)
     private boolean hoverPreviewEnabled = false;
     private boolean showCellImages = false;
     // Per-class ordered representative cell indices (medoid + farthest-point spread);
@@ -394,6 +395,12 @@ public class PointCloudView extends Pane {
         redraw();
     }
 
+    /** Set the canvas background color, or {@code null} to match the QuPath theme. */
+    public void setBackgroundColor(Color backgroundColor) {
+        this.backgroundColor = backgroundColor;
+        redraw();
+    }
+
     public void setHoverPreviewEnabled(boolean enabled) {
         this.hoverPreviewEnabled = enabled;
     }
@@ -563,8 +570,12 @@ public class PointCloudView extends Pane {
         double w = canvas.getWidth();
         double h = canvas.getHeight();
         boolean dark = isDarkTheme();
-        Color bg = dark ? Color.rgb(40, 40, 43) : Color.rgb(250, 250, 250);
-        Color fg = dark ? Color.rgb(220, 220, 220) : Color.rgb(40, 40, 40);
+        // Background: a user-chosen color if set, else the theme-aware default.
+        Color bg =
+                backgroundColor != null ? backgroundColor : (dark ? Color.rgb(40, 40, 43) : Color.rgb(250, 250, 250));
+        // Foreground (text/tripod) derived from background luminance so it stays readable on any color.
+        double bgLum = 0.299 * bg.getRed() + 0.587 * bg.getGreen() + 0.114 * bg.getBlue();
+        Color fg = bgLum < 0.5 ? Color.rgb(220, 220, 220) : Color.rgb(40, 40, 40);
         gc.setFill(bg);
         gc.fillRect(0, 0, w, h);
 

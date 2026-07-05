@@ -25,6 +25,7 @@ import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ColorPicker;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
@@ -43,6 +44,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.Window;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -457,8 +459,37 @@ public class Cluster3DNavigatorPane extends BorderPane {
         cloudView.setRepresentativesPerCluster(
                 Cluster3DNavPreferences.representativesPerClusterProperty().get());
 
+        // Background color: a custom color, or "Auto" to match the QuPath light/dark theme.
+        ColorPicker bgPicker = new ColorPicker();
+        bgPicker.setTooltip(new Tooltip("Background color of the 3D view. Uncheck \"Auto\" to choose a custom color."));
+        CheckBox autoBg = new CheckBox("Auto (theme)");
+        autoBg.setTooltip(new Tooltip("Match the QuPath light/dark theme background."));
+        String bgPref = Cluster3DNavPreferences.backgroundColorProperty().get();
+        boolean autoInit = bgPref == null || bgPref.isBlank();
+        autoBg.setSelected(autoInit);
+        bgPicker.setValue(parseColorOrDefault(bgPref));
+        bgPicker.setDisable(autoInit);
+        Runnable applyBg = () -> {
+            boolean auto = autoBg.isSelected();
+            bgPicker.setDisable(auto);
+            if (auto) {
+                Cluster3DNavPreferences.backgroundColorProperty().set("");
+                cloudView.setBackgroundColor(null);
+            } else {
+                Color c = bgPicker.getValue();
+                Cluster3DNavPreferences.backgroundColorProperty().set(toHexColor(c));
+                cloudView.setBackgroundColor(c);
+            }
+        };
+        autoBg.selectedProperty().addListener((o, a, b) -> applyBg.run());
+        bgPicker.valueProperty().addListener((o, a, b) -> applyBg.run());
+        // Apply the persisted background to the view on construction.
+        cloudView.setBackgroundColor(autoInit ? null : parseColorOrDefault(bgPref));
+        HBox bgRow = new HBox(8, new Label("Background"), bgPicker, autoBg);
+
         VBox content = new VBox(
                 6,
+                bgRow,
                 labeledRow("Crop scale", cropScale),
                 labeledRow("Point size", pointSize),
                 depthCue,
@@ -476,6 +507,26 @@ public class Cluster3DNavigatorPane extends BorderPane {
         HBox row = new HBox(8, new Label(label), control);
         row.setAlignment(Pos.CENTER_LEFT);
         return row;
+    }
+
+    /** Parse a "#RRGGBB" web color; falls back to the light-theme default on empty/invalid. */
+    private static Color parseColorOrDefault(String hex) {
+        if (hex != null && !hex.isBlank()) {
+            try {
+                return Color.web(hex);
+            } catch (IllegalArgumentException ignored) {
+                // fall through to the default below
+            }
+        }
+        return Color.web("#FAFAFA"); // matches the light-theme background default
+    }
+
+    /** Format an opaque JavaFX Color as an ASCII "#RRGGBB" web string. */
+    private static String toHexColor(Color c) {
+        return String.format(
+                "#%02X%02X%02X",
+                (int) Math.round(c.getRed() * 255), (int) Math.round(c.getGreen() * 255), (int)
+                        Math.round(c.getBlue() * 255));
     }
 
     private static Spinner<Double> doubleSpinner(double min, double max, double value, double step) {

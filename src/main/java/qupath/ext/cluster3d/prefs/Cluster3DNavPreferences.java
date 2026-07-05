@@ -48,12 +48,14 @@ public final class Cluster3DNavPreferences {
     public static final int DEFAULT_REPRESENTATIVES_PER_CLUSTER = 3;
     public static final int DEFAULT_CELL_LIMIT_PER_IMAGE = 0; // 0 = no limit
     public static final int DEFAULT_SUBSAMPLE_SEED = 42;
+    public static final String DEFAULT_BACKGROUND_COLOR = ""; // empty = auto (match QuPath theme)
 
     private static DoubleProperty windowX;
     private static DoubleProperty windowY;
     private static DoubleProperty windowW;
     private static DoubleProperty windowH;
     private static StringProperty mode;
+    private static StringProperty backgroundColor;
     private static DoubleProperty cropScale;
     private static DoubleProperty pointSize;
     private static BooleanProperty depthCue;
@@ -91,6 +93,7 @@ public final class Cluster3DNavPreferences {
         cellLimitPerImage =
                 PathPrefs.createPersistentPreference(PREFIX + "cellLimitPerImage", DEFAULT_CELL_LIMIT_PER_IMAGE);
         subsampleSeed = PathPrefs.createPersistentPreference(PREFIX + "subsampleSeed", DEFAULT_SUBSAMPLE_SEED);
+        backgroundColor = PathPrefs.createPersistentPreference(PREFIX + "backgroundColor", DEFAULT_BACKGROUND_COLOR);
 
         installed = true;
         logger.info("Cluster 3D Navigator preferences installed");
@@ -125,6 +128,12 @@ public final class Cluster3DNavPreferences {
     public static StringProperty modeProperty() {
         ensureInstalled();
         return mode;
+    }
+
+    /** Background color as a web hex string ("#RRGGBB"), or empty to match the QuPath theme. */
+    public static StringProperty backgroundColorProperty() {
+        ensureInstalled();
+        return backgroundColor;
     }
 
     public static DoubleProperty cropScaleProperty() {
