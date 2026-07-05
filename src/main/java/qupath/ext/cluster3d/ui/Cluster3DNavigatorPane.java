@@ -37,6 +37,7 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -51,6 +52,7 @@ import qupath.ext.cluster3d.model.CellRef;
 import qupath.ext.cluster3d.model.PointCloudData;
 import qupath.ext.cluster3d.prefs.Cluster3DNavPreferences;
 import qupath.ext.cluster3d.service.CellCropService;
+import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
 import qupath.lib.projects.Project;
@@ -97,6 +99,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
     private final Label statusLabel = new Label("");
     private final Label noteLabel = new Label("");
     private boolean partialReadError = false;
+    private boolean limited = false;
     private final ImageView previewView = new ImageView();
     private final Label previewCaption = new Label("");
     private final Button updateFromViewerButton = new Button("Update from viewer");
@@ -240,11 +243,40 @@ public class Cluster3DNavigatorPane extends BorderPane {
         modeControls.setAlignment(Pos.CENTER_LEFT);
         modeControls.getChildren().setAll(new Label("Mode:"), modeCurrent, modeProject, selectImagesButton);
 
-        Region spacer1 = new Region();
-        HBox.setHgrow(spacer1, Priority.ALWAYS);
-        HBox strip1 = new HBox(10, modeControls, spacer1, pointsLabel, reset);
-        strip1.setAlignment(Pos.CENTER_LEFT);
-        strip1.setPadding(new Insets(6));
+        // Performance controls (upper-right): per-image cell limit + seed + a help button.
+        Spinner<Integer> cellLimit = intSpinner(
+                0, 1000000, Cluster3DNavPreferences.cellLimitPerImageProperty().get(), 500);
+        cellLimit.setTooltip(new Tooltip("Limit how many cells per image are loaded. An option for slower "
+                + "computers and laptops: it improves performance but WILL limit the amount of data shown "
+                + "(a performance tradeoff)."));
+        cellLimit.valueProperty().addListener((o, a, b) -> {
+            Cluster3DNavPreferences.cellLimitPerImageProperty().set(b);
+            reload(); // re-read + re-subsample off the FX thread
+        });
+
+        Spinner<Integer> seed = intSpinner(
+                0,
+                Integer.MAX_VALUE,
+                Cluster3DNavPreferences.subsampleSeedProperty().get());
+        seed.setTooltip(new Tooltip(
+                "Random seed for which cells are shown when a cell limit is set. " + "Change it to resample."));
+        seed.valueProperty().addListener((o, a, b) -> {
+            Cluster3DNavPreferences.subsampleSeedProperty().set(b);
+            reload();
+        });
+
+        Button limitHelp = new Button("?");
+        limitHelp.setTooltip(new Tooltip("How the per-image cell limit chooses cells."));
+        limitHelp.setOnAction(e -> Dialogs.showMessageDialog(
+                "Cell limit per image",
+                "When a cell limit is set, cells are chosen per image so every cluster stays represented: "
+                        + "each cluster keeps at least its representative cells (spread across the cluster by "
+                        + "farthest-point sampling), guaranteeing a minimum per cluster; the remaining budget is "
+                        + "filled at random using the seed. Clusters present in the image are never dropped "
+                        + "entirely (up to the limit)."));
+
+        HBox limitRow = new HBox(4, new Label("Cell limit per image"), cellLimit, new Label("Seed"), seed, limitHelp);
+        limitRow.setAlignment(Pos.CENTER_LEFT);
 
         axisX.setTooltip(new Tooltip("Measurement plotted on the X axis."));
         axisY.setTooltip(new Tooltip("Measurement plotted on the Y axis."));
@@ -264,7 +296,19 @@ public class Cluster3DNavigatorPane extends BorderPane {
         changeAxes.setTooltip(new Tooltip("Pick which three numeric measurements map to X, Y, and Z."));
         changeAxes.setOnAction(e -> openAxisPicker());
 
-        HBox strip2 = new HBox(
+        // Quick toggle: moved out of the collapsed Display options so it is one click away,
+        // right after Change axes... (setShowCellImages also pre-warms the representatives).
+        CheckBox cellImages = new CheckBox("Show cell images");
+        cellImages.setSelected(Cluster3DNavPreferences.showCellImagesProperty().get());
+        cellImages.setTooltip(
+                new Tooltip("Draw the actual cell crops at their 3D positions when zoomed in. Off = points only."));
+        cellImages.selectedProperty().addListener((o, a, b) -> {
+            Cluster3DNavPreferences.showCellImagesProperty().set(b);
+            cloudView.setShowCellImages(b);
+        });
+        cloudView.setShowCellImages(cellImages.isSelected());
+
+        HBox axisRow = new HBox(
                 8,
                 new Label("Axes:"),
                 new Label("X"),
@@ -274,11 +318,21 @@ public class Cluster3DNavigatorPane extends BorderPane {
                 new Label("Z"),
                 axisZ,
                 autoTag,
-                changeAxes);
-        strip2.setAlignment(Pos.CENTER_LEFT);
-        strip2.setPadding(new Insets(0, 6, 6, 6));
+                changeAxes,
+                cellImages);
+        axisRow.setAlignment(Pos.CENTER_LEFT);
 
-        VBox top = new VBox(strip1, strip2, buildDisplayOptions());
+        HBox pointsReset = new HBox(8, pointsLabel, reset);
+        pointsReset.setAlignment(Pos.CENTER_LEFT);
+
+        // A FlowPane so the control GROUPS wrap to a new line at narrow widths instead of
+        // clipping off the right edge -- each HBox group stays intact and wraps as a unit,
+        // so the Cell limit / Seed / "?" controls are always reachable at the min 820 width.
+        FlowPane controls = new FlowPane(12, 6, modeControls, axisRow, limitRow, pointsReset);
+        controls.setAlignment(Pos.CENTER_LEFT);
+        controls.setPadding(new Insets(6));
+
+        VBox top = new VBox(controls, buildDisplayOptions());
         setTop(top);
 
         // Center: canvas + busy overlay.
@@ -297,7 +351,18 @@ public class Cluster3DNavigatorPane extends BorderPane {
         busyBox.getChildren().addAll(spinner, busyLabel);
         busyBox.setVisible(false);
         busyBox.setMouseTransparent(true);
-        centerStack.getChildren().addAll(cloudView, busyBox);
+
+        // Top-center "Image still populating" pill while thumbnails are loading in.
+        Label populating = new Label("Image still populating");
+        populating.setStyle("-fx-background-color: rgba(0,0,0,0.55); -fx-text-fill: white; "
+                + "-fx-background-radius: 12; -fx-padding: 4 12 4 12; -fx-font-size: 11px;");
+        populating.setMouseTransparent(true);
+        StackPane.setAlignment(populating, Pos.TOP_CENTER);
+        StackPane.setMargin(populating, new Insets(8, 0, 0, 0));
+        populating.visibleProperty().bind(cloudView.populatingProperty());
+        populating.managedProperty().bind(cloudView.populatingProperty());
+
+        centerStack.getChildren().addAll(cloudView, busyBox, populating);
         setCenter(centerStack);
 
         // Right: legend + cell preview (crop loads on click by default).
@@ -378,23 +443,13 @@ public class Cluster3DNavigatorPane extends BorderPane {
         });
         cloudView.setShowTripod(tripod.isSelected());
 
-        CheckBox cellImages = new CheckBox("Show cell images when zoomed in");
-        cellImages.setSelected(Cluster3DNavPreferences.showCellImagesProperty().get());
-        cellImages.setTooltip(new Tooltip("When zoomed in, draw the actual cell crops at their 3D positions "
-                + "instead of points. Crops load on demand, so the first zoom-in briefly shows points."));
-        cellImages.selectedProperty().addListener((o, a, b) -> {
-            Cluster3DNavPreferences.showCellImagesProperty().set(b);
-            cloudView.setShowCellImages(b);
-        });
-        cloudView.setShowCellImages(cellImages.isSelected());
-
         Spinner<Integer> repsPerCluster = intSpinner(
                 0,
                 5,
                 Cluster3DNavPreferences.representativesPerClusterProperty().get());
         repsPerCluster.setTooltip(
                 new Tooltip("Cells per cluster shown as images even when zoomed out (0 = only when zoomed in). "
-                        + "Requires \"Show cell images when zoomed in\"."));
+                        + "Requires \"Show cell images\"."));
         repsPerCluster.valueProperty().addListener((o, a, b) -> {
             Cluster3DNavPreferences.representativesPerClusterProperty().set(b);
             cloudView.setRepresentativesPerCluster(b);
@@ -409,7 +464,6 @@ public class Cluster3DNavigatorPane extends BorderPane {
                 depthCue,
                 hoverPreview,
                 tripod,
-                cellImages,
                 labeledRow("Representative cells per cluster", repsPerCluster));
         content.setPadding(new Insets(6));
         TitledPane pane = new TitledPane("Display options", content);
@@ -456,9 +510,13 @@ public class Cluster3DNavigatorPane extends BorderPane {
     }
 
     private static Spinner<Integer> intSpinner(int min, int max, int value) {
+        return intSpinner(min, max, value, 1);
+    }
+
+    private static Spinner<Integer> intSpinner(int min, int max, int value, int step) {
         Spinner<Integer> s = new Spinner<>();
-        s.setValueFactory(
-                new SpinnerValueFactory.IntegerSpinnerValueFactory(min, max, Math.max(min, Math.min(max, value))));
+        s.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                min, max, Math.max(min, Math.min(max, value)), step));
         s.setPrefWidth(90);
         s.setEditable(true);
         // Editable Spinners only commit typed text on Enter; also commit (clamped) on focus-loss.
@@ -614,6 +672,15 @@ public class Cluster3DNavigatorPane extends BorderPane {
         final ImageData<BufferedImage> imgData = imageData;
         final String fImageId = imageId;
         final String fImageName = imageName;
+        // Per-image cell limit + seed from prefs; the guaranteed per-cluster minimum reuses
+        // the representatives-per-cluster control (floored at 1 so no cluster is dropped).
+        final DetectionReader.ReadOptions opts = new DetectionReader.ReadOptions(
+                Cluster3DNavPreferences.cellLimitPerImageProperty().get(),
+                Math.max(
+                        1,
+                        Cluster3DNavPreferences.representativesPerClusterProperty()
+                                .get()),
+                Cluster3DNavPreferences.subsampleSeedProperty().get());
 
         setBusy(true, pm ? "Reading detections across selected images..." : "Reading detections...");
         cloudView.setEmptyMessage(null);
@@ -623,9 +690,9 @@ public class Cluster3DNavigatorPane extends BorderPane {
                     try {
                         if (pm) {
                             result = DetectionReader.readEntries(
-                                    selEntries, msg -> Platform.runLater(() -> busyLabel.setText(msg)));
+                                    selEntries, msg -> Platform.runLater(() -> busyLabel.setText(msg)), opts);
                         } else {
-                            result = DetectionReader.readImage(imgData, fImageId, fImageName);
+                            result = DetectionReader.readImage(imgData, fImageId, fImageName, opts);
                         }
                     } catch (Exception e) {
                         logger.error("Detection read failed", e);
@@ -645,6 +712,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
     private void onReadComplete(DetectionReader.ReadResult result) {
         this.numericAxes = result.numericAxes;
         this.partialReadError = result.readError;
+        this.limited = result.limited;
         List<String> numeric = result.numericAxes;
 
         // Populate axis combos.
@@ -791,6 +859,9 @@ public class Cluster3DNavigatorPane extends BorderPane {
         String text = String.format("Points: %,d shown / %,d total", shown, total);
         if (data.omittedCount > 0) {
             text += String.format(" (%,d omitted: missing axis value)", data.omittedCount);
+        }
+        if (limited) {
+            text += " (limited)";
         }
         pointsLabel.setText(text);
     }

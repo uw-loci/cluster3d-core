@@ -72,21 +72,49 @@ public final class DetectionReader {
         }
     }
 
-    /** Result of a read: per-cell records, numeric name union, and a read-error flag. */
+    /** Result of a read: per-cell records, numeric name union, a read-error flag, and
+     *  whether any source image was subsampled to honor the per-image cell limit. */
     public static final class ReadResult {
         public final List<CellRecord> records;
         public final List<String> numericAxes;
         public final boolean readError;
+        public final boolean limited;
 
         public ReadResult(List<CellRecord> records, List<String> numericAxes, boolean readError) {
+            this(records, numericAxes, readError, false);
+        }
+
+        public ReadResult(List<CellRecord> records, List<String> numericAxes, boolean readError, boolean limited) {
             this.records = records;
             this.numericAxes = numericAxes;
             this.readError = readError;
+            this.limited = limited;
         }
 
         public int size() {
             return records.size();
         }
+    }
+
+    /**
+     * Per-image cell-limit options. When {@link #cellLimit} &gt; 0, each source image is
+     * subsampled to at most that many cells: every cluster keeps at least
+     * {@link #minPerCluster} farthest-point representatives, the rest of the budget is
+     * filled at random using {@link #seed} (deterministic).
+     */
+    public static final class ReadOptions {
+        public final int cellLimit;
+        public final int minPerCluster;
+        public final long seed;
+
+        public ReadOptions(int cellLimit, int minPerCluster, long seed) {
+            this.cellLimit = cellLimit;
+            this.minPerCluster = minPerCluster;
+            this.seed = seed;
+        }
+
+        /** No limit -- read every cell. */
+        public static final ReadOptions UNLIMITED = new ReadOptions(0, 1, 0);
     }
 
     /**
@@ -121,19 +149,21 @@ public final class DetectionReader {
     }
 
     /** Read all detections of a single image (off the FX thread). */
-    public static ReadResult readImage(ImageData<BufferedImage> imageData, String imageId, String imageName) {
+    public static ReadResult readImage(
+            ImageData<BufferedImage> imageData, String imageId, String imageName, ReadOptions opts) {
         List<CellRecord> records = new ArrayList<>();
         List<Map<String, Double>> maps = new ArrayList<>();
         boolean error = false;
+        boolean limited = false;
         if (imageData != null) {
             try {
-                collect(imageData, imageId, imageName, records, maps);
+                limited = collectImage(imageData, imageId, imageName, opts, records, maps);
             } catch (Exception e) {
                 logger.error("Failed to read detections for image '{}'", imageName, e);
                 error = true;
             }
         }
-        return new ReadResult(records, numericMeasurementUnion(maps), error);
+        return new ReadResult(records, numericMeasurementUnion(maps), error, limited);
     }
 
     /**
@@ -141,8 +171,8 @@ public final class DetectionReader {
      *
      * @param progress optional callback "image k of N" (may be null)
      */
-    public static ReadResult readProject(Project<BufferedImage> project, Consumer<String> progress) {
-        return readEntries(project == null ? null : project.getImageList(), progress);
+    public static ReadResult readProject(Project<BufferedImage> project, Consumer<String> progress, ReadOptions opts) {
+        return readEntries(project == null ? null : project.getImageList(), progress, opts);
     }
 
     /**
@@ -152,11 +182,14 @@ public final class DetectionReader {
      *
      * @param entries  the selected project-image entries (may be null/empty)
      * @param progress optional callback "image k of N" (may be null)
+     * @param opts     per-image cell-limit options
      */
-    public static ReadResult readEntries(List<ProjectImageEntry<BufferedImage>> entries, Consumer<String> progress) {
+    public static ReadResult readEntries(
+            List<ProjectImageEntry<BufferedImage>> entries, Consumer<String> progress, ReadOptions opts) {
         List<CellRecord> records = new ArrayList<>();
         List<Map<String, Double>> maps = new ArrayList<>();
         boolean error = false;
+        boolean limited = false;
         if (entries != null) {
             int n = entries.size();
             int k = 0;
@@ -167,22 +200,35 @@ public final class DetectionReader {
                 }
                 try {
                     ImageData<BufferedImage> data = entry.readImageData();
-                    collect(data, entry.getID(), entry.getImageName(), records, maps);
+                    limited |= collectImage(data, entry.getID(), entry.getImageName(), opts, records, maps);
                 } catch (Exception e) {
                     logger.error("Could not read image data for '{}'", entry.getImageName(), e);
                     error = true;
                 }
             }
         }
-        return new ReadResult(records, numericMeasurementUnion(maps), error);
+        return new ReadResult(records, numericMeasurementUnion(maps), error, limited);
     }
 
-    private static void collect(
+    /**
+     * Collect one image's detections into the shared record/measurement lists, subsampling
+     * to at most {@code opts.cellLimit} cells per image (0 = no limit). Returns true if this
+     * image was subsampled.
+     */
+    private static boolean collectImage(
             ImageData<BufferedImage> data,
             String imageId,
             String imageName,
-            List<CellRecord> records,
-            List<Map<String, Double>> maps) {
+            ReadOptions opts,
+            List<CellRecord> outRecords,
+            List<Map<String, Double>> outMaps) {
+        List<CellRecord> recs = new ArrayList<>();
+        List<Map<String, Double>> maps = new ArrayList<>();
+        List<Double> xs = new ArrayList<>();
+        List<Double> ys = new ArrayList<>();
+        List<Integer> classIdx = new ArrayList<>();
+        Map<PathClass, Integer> classOf = new LinkedHashMap<>(); // per-image cluster index
+
         for (PathObject det : data.getHierarchy().getDetectionObjects()) {
             ROI roi = det.getROI();
             if (roi == null) {
@@ -196,9 +242,37 @@ public final class DetectionReader {
             }
             double half = 0.5 * Math.max(roi.getBoundsWidth(), roi.getBoundsHeight());
             CellRef ref = new CellRef(imageId, imageName, roi.getCentroidX(), roi.getCentroidY(), half);
-            records.add(new CellRecord(ref, det.getPathClass(), m));
+            PathClass pc = det.getPathClass();
+            PathClass key = (pc == PathClass.getNullClass()) ? null : pc;
+            recs.add(new CellRecord(ref, pc, m));
             maps.add(m);
+            xs.add(roi.getCentroidX());
+            ys.add(roi.getCentroidY());
+            classIdx.add(classOf.computeIfAbsent(key, k -> classOf.size()));
         }
+
+        int n = recs.size();
+        ReadOptions o = opts == null ? ReadOptions.UNLIMITED : opts;
+        if (o.cellLimit <= 0 || n <= o.cellLimit) {
+            outRecords.addAll(recs);
+            outMaps.addAll(maps);
+            return false;
+        }
+        int[] kept = subsamplePerImage(
+                n, toIntArray(classIdx), toDoubleArray(xs), toDoubleArray(ys), o.cellLimit, o.minPerCluster, o.seed);
+        for (int idx : kept) {
+            outRecords.add(recs.get(idx));
+            outMaps.add(maps.get(idx));
+        }
+        return true;
+    }
+
+    private static int[] toIntArray(List<Integer> list) {
+        int[] out = new int[list.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = list.get(i);
+        }
+        return out;
     }
 
     /**
@@ -363,6 +437,174 @@ public final class DetectionReader {
             return UNCLASSIFIED_COLOR;
         }
         return Color.rgb(ColorTools.red(rgb), ColorTools.green(rgb), ColorTools.blue(rgb));
+    }
+
+    /**
+     * Farthest-point sampling (PURE, unit-testable). Returns up to {@code k} ordered cell
+     * indices (a subset of {@code memberIndices}) that spread across the members: the first
+     * is the MEDOID (member nearest the centroid), then each subsequent pick is the member
+     * with the greatest minimum distance to the already-selected set. Deterministic (ties
+     * resolve to the earliest member). Returns all members (FPS order) when
+     * {@code k >= memberIndices.length}. Used for per-class representatives (embedding space)
+     * and the per-image subsample's guaranteed minimum (spatial-centroid space).
+     */
+    public static int[] farthestPointSample(float[] ax, float[] ay, float[] az, int[] memberIndices, int k) {
+        int m = memberIndices == null ? 0 : memberIndices.length;
+        int kk = Math.min(Math.max(0, k), m);
+        if (kk == 0) {
+            return new int[0];
+        }
+        double cx = 0, cy = 0, cz = 0;
+        for (int idx : memberIndices) {
+            cx += ax[idx];
+            cy += ay[idx];
+            cz += az[idx];
+        }
+        cx /= m;
+        cy /= m;
+        cz /= m;
+        int medoidPos = 0;
+        double bestDist = Double.MAX_VALUE;
+        for (int p = 0; p < m; p++) {
+            int idx = memberIndices[p];
+            double d = sq(ax[idx] - cx) + sq(ay[idx] - cy) + sq(az[idx] - cz);
+            if (d < bestDist) {
+                bestDist = d;
+                medoidPos = p;
+            }
+        }
+
+        boolean[] chosen = new boolean[m];
+        double[] minDist = new double[m];
+        java.util.Arrays.fill(minDist, Double.MAX_VALUE);
+        int[] result = new int[kk];
+
+        int selPos = medoidPos;
+        for (int step = 0; step < kk; step++) {
+            chosen[selPos] = true;
+            result[step] = memberIndices[selPos];
+            int selIdx = memberIndices[selPos];
+            for (int p = 0; p < m; p++) {
+                if (chosen[p]) {
+                    continue;
+                }
+                int idx = memberIndices[p];
+                double d = sq(ax[idx] - ax[selIdx]) + sq(ay[idx] - ay[selIdx]) + sq(az[idx] - az[selIdx]);
+                if (d < minDist[p]) {
+                    minDist[p] = d;
+                }
+            }
+            if (step + 1 < kk) {
+                double far = -1;
+                int nextPos = -1;
+                for (int p = 0; p < m; p++) {
+                    if (!chosen[p] && minDist[p] > far) {
+                        far = minDist[p];
+                        nextPos = p;
+                    }
+                }
+                selPos = nextPos;
+            }
+        }
+        return result;
+    }
+
+    private static double sq(double v) {
+        return v * v;
+    }
+
+    /**
+     * Per-image cell subsample (PURE, unit-testable, deterministic given {@code seed}). Picks
+     * at most {@code limit} of the {@code n} cells so that:
+     * <ol>
+     *   <li>every cluster keeps at least {@code min(max(1, minPerCluster), clusterSize)}
+     *       farthest-point representatives (spread by spatial centroid {@code (x, y)}), added
+     *       round-robin across clusters so every cluster is represented up to the limit;</li>
+     *   <li>the remaining budget is filled at random (seeded) from the non-kept cells --
+     *       proportional to cluster size, since bigger clusters have more remaining cells.</li>
+     * </ol>
+     * Returns the kept cell indices in ascending order. When {@code limit <= 0} or
+     * {@code n <= limit}, returns the identity {@code 0..n-1} (no subsample).
+     *
+     * @param classIdx per-cell cluster index (0-based, contiguous within the image)
+     * @param x        per-cell spatial centroid X
+     * @param y        per-cell spatial centroid Y
+     */
+    public static int[] subsamplePerImage(
+            int n, int[] classIdx, double[] x, double[] y, int limit, int minPerCluster, long seed) {
+        if (limit <= 0 || n <= limit) {
+            int[] all = new int[n];
+            for (int i = 0; i < n; i++) {
+                all[i] = i;
+            }
+            return all;
+        }
+        int nClusters = 0;
+        for (int c : classIdx) {
+            nClusters = Math.max(nClusters, c + 1);
+        }
+        // Members per cluster.
+        List<List<Integer>> members = new ArrayList<>();
+        for (int c = 0; c < nClusters; c++) {
+            members.add(new ArrayList<>());
+        }
+        for (int i = 0; i < n; i++) {
+            members.get(classIdx[i]).add(i);
+        }
+
+        // FPS coords (spatial centroid; z = 0). float[] indexed by cell index.
+        float[] fx = new float[n];
+        float[] fy = new float[n];
+        float[] fz = new float[n];
+        for (int i = 0; i < n; i++) {
+            fx[i] = (float) x[i];
+            fy[i] = (float) y[i];
+        }
+
+        int minKeep = Math.max(1, minPerCluster);
+        boolean[] kept = new boolean[n];
+        int keptCount = 0;
+
+        // Phase 1: round-robin the guaranteed reps so every cluster is represented up to limit.
+        int[][] repOrder = new int[nClusters][];
+        for (int c = 0; c < nClusters; c++) {
+            int[] mem = toIntArray(members.get(c));
+            repOrder[c] = farthestPointSample(fx, fy, fz, mem, Math.min(minKeep, mem.length));
+        }
+        for (int round = 0; round < minKeep && keptCount < limit; round++) {
+            for (int c = 0; c < nClusters && keptCount < limit; c++) {
+                if (round < repOrder[c].length) {
+                    int idx = repOrder[c][round];
+                    if (!kept[idx]) {
+                        kept[idx] = true;
+                        keptCount++;
+                    }
+                }
+            }
+        }
+
+        // Phase 2: random fill from the remaining cells (seeded, ~proportional to cluster size).
+        int budget = limit - keptCount;
+        if (budget > 0) {
+            List<Integer> remaining = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                if (!kept[i]) {
+                    remaining.add(i);
+                }
+            }
+            java.util.Collections.shuffle(remaining, new java.util.Random(seed));
+            for (int j = 0; j < budget && j < remaining.size(); j++) {
+                kept[remaining.get(j)] = true;
+            }
+        }
+
+        List<Integer> out = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (kept[i]) {
+                out.add(i);
+            }
+        }
+        return toIntArray(out);
     }
 
     /** Map key that treats the null / null-class as the single "unclassified" bucket. */

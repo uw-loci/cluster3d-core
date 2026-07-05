@@ -176,24 +176,27 @@ public class CellCropService implements AutoCloseable {
     }
 
     private ImageDisplay resolveDisplay(CellRef ref, ImageServer<BufferedImage> server) {
-        // Current viewer image -> the LIVE viewer display, so brightness/contrast/
-        // channel edits are reflected when the preview is refreshed.
         var viewer = qupath.getViewer();
         ImageData<BufferedImage> currentData = qupath.getImageData();
-        if (viewer != null
-                && currentData != null
-                && currentData.getServer() == server
-                && viewer.getImageDisplay() != null) {
-            return viewer.getImageDisplay();
+        ImageDisplay viewerDisplay = (viewer != null) ? viewer.getImageDisplay() : null;
+
+        // Current viewer image -> the LIVE viewer display directly.
+        if (viewerDisplay != null && currentData != null && currentData.getServer() == server) {
+            return viewerDisplay;
         }
-        // Other images -> a cached display that MIRRORS the open viewer's channel
-        // selection + contrast (multiplex panels share channel names), so "Update from
-        // viewer" affects crops from every image, not just the currently-open one.
-        // The cache is cleared on "Update from viewer", so this re-mirrors each refresh.
+        // OTHER images -> apply the LIVE viewer display too (so a multi-image cloud renders
+        // every cell with the viewer's brightness/contrast/channel settings), but ONLY when
+        // the channel counts match (same panel); the ChannelDisplayInfo transforms are keyed
+        // by channel index, so a same-count image transforms correctly. On mismatch (or no
+        // viewer image), fall back to this image's own cached default display.
+        if (viewerDisplay != null
+                && currentData != null
+                && canApplyViewerDisplay(currentData.getServer().nChannels(), server.nChannels())) {
+            return viewerDisplay;
+        }
         if (ref.getImageId() == null) {
             return null;
         }
-        ImageDisplay viewerDisplay = (viewer != null) ? viewer.getImageDisplay() : null;
         return displays.computeIfAbsent(ref.getImageId(), id -> {
             try {
                 ImageDisplay d = ImageDisplay.create(new ImageData<>(server));
@@ -204,6 +207,15 @@ public class CellCropService implements AutoCloseable {
                 return null;
             }
         });
+    }
+
+    /**
+     * Whether the current viewer's live display may be applied to a crop from another image:
+     * only when the channel counts match (same panel), since the display's channel transforms
+     * are keyed by channel index. Pure and unit-testable.
+     */
+    static boolean canApplyViewerDisplay(int viewerChannels, int cropChannels) {
+        return viewerChannels == cropChannels;
     }
 
     /**

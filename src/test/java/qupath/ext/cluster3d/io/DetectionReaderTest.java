@@ -123,4 +123,105 @@ class DetectionReaderTest {
         assertThat(d.classDisplayName(0)).isEqualTo("Unclassified");
         assertThat(d.xName).isEqualTo("X");
     }
+
+    // --- farthest-point sampling ---
+
+    @Test
+    void farthestPointSampleCollinearPicksMedoidThenExtremes() {
+        // Collinear 0..4; centroid = 2 -> medoid index 2, then the two extremes.
+        float[] ax = {0, 1, 2, 3, 4};
+        float[] zero = {0, 0, 0, 0, 0};
+        int[] members = {0, 1, 2, 3, 4};
+        assertThat(DetectionReader.farthestPointSample(ax, zero, zero, members, 3))
+                .containsExactly(2, 0, 4);
+    }
+
+    @Test
+    void farthestPointSampleReturnsAllWhenKExceedsMembers() {
+        float[] ax = {0, 1, 2, 3, 4};
+        float[] zero = {0, 0, 0, 0, 0};
+        int[] members = {0, 1, 2, 3, 4};
+        int[] reps = DetectionReader.farthestPointSample(ax, zero, zero, members, 10);
+        assertThat(reps).hasSize(5).containsExactlyInAnyOrder(0, 1, 2, 3, 4);
+        assertThat(reps[0]).isEqualTo(2); // medoid still first
+    }
+
+    @Test
+    void farthestPointSampleIsDeterministicAndHonorsMemberIndices() {
+        float[] ax = new float[13];
+        float[] zero = new float[13];
+        ax[10] = 0;
+        ax[11] = 5;
+        ax[12] = 10;
+        int[] members = {10, 11, 12};
+        // centroid = 5 -> medoid 11; farthest tie (10 & 12 both 5 away) -> earliest member 10.
+        assertThat(DetectionReader.farthestPointSample(ax, zero, zero, members, 2))
+                .containsExactly(11, 10);
+        assertThat(DetectionReader.farthestPointSample(ax, zero, zero, members, 2))
+                .containsExactly(DetectionReader.farthestPointSample(ax, zero, zero, members, 2));
+        assertThat(DetectionReader.farthestPointSample(ax, zero, zero, members, 0))
+                .isEmpty();
+        assertThat(DetectionReader.farthestPointSample(ax, zero, zero, new int[0], 3))
+                .isEmpty();
+    }
+
+    // --- per-image subsample ---
+
+    private static double[] range(int n) {
+        double[] a = new double[n];
+        for (int i = 0; i < n; i++) {
+            a[i] = i;
+        }
+        return a;
+    }
+
+    @Test
+    void subsampleNoLimitOrUnderLimitReturnsIdentity() {
+        int[] cls = {0, 0, 1, 1};
+        double[] x = range(4);
+        double[] y = new double[4];
+        assertThat(DetectionReader.subsamplePerImage(4, cls, x, y, 0, 1, 42)).containsExactly(0, 1, 2, 3);
+        assertThat(DetectionReader.subsamplePerImage(4, cls, x, y, 10, 1, 42)).containsExactly(0, 1, 2, 3);
+    }
+
+    @Test
+    void subsampleKeepsEveryClusterAndRespectsLimit() {
+        // 3 clusters of 10 cells each (30 total); limit 6 -> at most 6 kept, every cluster present.
+        int n = 30;
+        int[] cls = new int[n];
+        double[] x = new double[n];
+        double[] y = new double[n];
+        for (int i = 0; i < n; i++) {
+            cls[i] = i / 10; // clusters 0,1,2
+            x[i] = i;
+        }
+        int[] kept = DetectionReader.subsamplePerImage(n, cls, x, y, 6, 1, 42);
+        assertThat(kept.length).isLessThanOrEqualTo(6);
+        java.util.Set<Integer> clustersKept = new java.util.HashSet<>();
+        for (int idx : kept) {
+            clustersKept.add(cls[idx]);
+        }
+        assertThat(clustersKept).containsExactlyInAnyOrder(0, 1, 2); // no cluster dropped
+    }
+
+    @Test
+    void subsampleIsDeterministicGivenSeed() {
+        int n = 50;
+        int[] cls = new int[n];
+        double[] x = new double[n];
+        double[] y = new double[n];
+        for (int i = 0; i < n; i++) {
+            cls[i] = i % 4;
+            x[i] = i;
+            y[i] = (i * 7) % 13;
+        }
+        int[] a = DetectionReader.subsamplePerImage(n, cls, x, y, 20, 2, 123);
+        int[] b = DetectionReader.subsamplePerImage(n, cls, x, y, 20, 2, 123);
+        int[] c = DetectionReader.subsamplePerImage(n, cls, x, y, 20, 2, 999);
+        assertThat(a).containsExactly(b);
+        assertThat(a).hasSize(20);
+        // A different seed generally yields a different fill (not asserting inequality strictly,
+        // just that both respect the limit).
+        assertThat(c).hasSize(20);
+    }
 }

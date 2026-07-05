@@ -77,6 +77,14 @@ class CellCropServiceTest {
     }
 
     @Test
+    void canApplyViewerDisplayOnlyWhenChannelCountsMatch() {
+        assertThat(CellCropService.canApplyViewerDisplay(3, 3)).isTrue();
+        assertThat(CellCropService.canApplyViewerDisplay(1, 1)).isTrue();
+        assertThat(CellCropService.canApplyViewerDisplay(3, 4)).isFalse();
+        assertThat(CellCropService.canApplyViewerDisplay(4, 3)).isFalse();
+    }
+
+    @Test
     void boundedLruIsAccessOrdered() {
         List<String> evicted = new ArrayList<>();
         Map<String, String> m = CellCropService.boundedLru(2, evicted::add);

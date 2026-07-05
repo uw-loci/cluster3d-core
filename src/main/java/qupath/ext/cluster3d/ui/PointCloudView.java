@@ -22,7 +22,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
+import javafx.beans.property.ReadOnlyBooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
@@ -36,6 +39,7 @@ import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.TextAlignment;
 import javafx.util.Duration;
+import qupath.ext.cluster3d.io.DetectionReader;
 import qupath.ext.cluster3d.model.CellRef;
 import qupath.ext.cluster3d.model.PointCloudData;
 import qupath.ext.cluster3d.render.Camera3D;
@@ -85,10 +89,12 @@ public class PointCloudView extends Pane {
     // decoded ~64-128px image; 400 keeps decoded-crop heap well under ~100 MB).
     private static final int IMAGE_CACHE_SIZE = 400;
     // Cap crop loads enqueued per frame so a fresh zoom-in does not submit a burst.
-    private static final int MAX_LOADS_PER_FRAME = 64;
+    private static final int MAX_LOADS_PER_FRAME = 128;
     // Global cap on concurrently in-flight crop loads: skip enqueue above this so the
     // executor queue + loadingIndices cannot balloon during fast interaction.
-    private static final int MAX_IN_FLIGHT = 96;
+    private static final int MAX_IN_FLIGHT = 160;
+    // Loader threads for off-thread crop reads.
+    private static final int LOADER_THREADS = 4;
     // A cell is an on-screen thumbnail candidate only if its projected point is within
     // the canvas bounds expanded by this many px (so a partly-visible thumbnail still
     // draws). Off-screen cells stay points and are never enqueued.
@@ -159,11 +165,21 @@ public class PointCloudView extends Pane {
     // terminated; without this guard the follow-on enqueueCrop() would submit to the
     // dead pool and throw RejectedExecutionException on window close.
     private volatile boolean disposed = false;
-    private final ExecutorService cropExecutor = Executors.newFixedThreadPool(2, r -> {
+    private final ExecutorService cropExecutor = Executors.newFixedThreadPool(LOADER_THREADS, r -> {
         Thread t = new Thread(r, "cluster3dnav-thumb");
         t.setDaemon(true);
         return t;
     });
+
+    // Last cursor position over the canvas (for prioritizing crop loads by what the user
+    // is looking at); NaN until the mouse moves over the canvas.
+    private double lastCursorX = Double.NaN;
+    private double lastCursorY = Double.NaN;
+
+    // TRUE while the currently-visible thumbnail set is still loading (loads in flight or
+    // selected-but-uncached cells). Debounced off so the banner does not flicker.
+    private final SimpleBooleanProperty populating = new SimpleBooleanProperty(false);
+    private final PauseTransition populatingHideDelay = new PauseTransition(Duration.millis(300));
 
     private int selectedIndex = -1;
     private String emptyMessage = null;
@@ -183,6 +199,7 @@ public class PointCloudView extends Pane {
 
     public PointCloudView(QuPathGUI qupath) {
         this.qupath = qupath;
+        populatingHideDelay.setOnFinished(e -> populating.set(false));
         getChildren().add(canvas);
         tooltip.setShowDelay(Duration.millis(200));
         tooltip.setText(GESTURE_HINT);
@@ -230,6 +247,12 @@ public class PointCloudView extends Pane {
         }
         invalidateProjection();
         redraw();
+        prewarmRepresentatives(); // populate the always-on far-out set without needing interaction
+    }
+
+    /** TRUE while the currently-visible thumbnail set is still loading (debounced). */
+    public ReadOnlyBooleanProperty populatingProperty() {
+        return populating;
     }
 
     /**
@@ -241,6 +264,24 @@ public class PointCloudView extends Pane {
         this.repsPerCluster = Math.max(0, Math.min(MAX_REPRESENTATIVES, k));
         rebuildRepCandidates();
         redraw();
+        prewarmRepresentatives();
+    }
+
+    /**
+     * Eagerly enqueue the per-cluster representative crops (the always-on far-out set) so the
+     * initial far-out view populates without waiting for camera interaction. Bounded by the
+     * in-flight cap; no-op when the cell-images feature is off or the crop source is unwired.
+     */
+    private void prewarmRepresentatives() {
+        if (data == null || cropLoader == null || !showCellImages) {
+            return;
+        }
+        int n = data.size();
+        for (int i = 0; i < n && loadingIndices.size() < MAX_IN_FLIGHT; i++) {
+            if (isRepCandidate(i)) {
+                enqueueCrop(i);
+            }
+        }
     }
 
     /** Compute up to MAX_REPRESENTATIVES ordered representatives per class via farthest-point sampling. */
@@ -271,7 +312,8 @@ public class PointCloudView extends Pane {
         }
         classReps = new int[nClasses][];
         for (int c = 0; c < nClasses; c++) {
-            classReps[c] = farthestPointSample(data.ax, data.ay, data.az, members[c], MAX_REPRESENTATIVES);
+            classReps[c] =
+                    DetectionReader.farthestPointSample(data.ax, data.ay, data.az, members[c], MAX_REPRESENTATIVES);
         }
     }
 
@@ -302,6 +344,9 @@ public class PointCloudView extends Pane {
     public void setShowCellImages(boolean showCellImages) {
         this.showCellImages = showCellImages;
         redraw();
+        if (showCellImages) {
+            prewarmRepresentatives(); // turning the feature on should populate reps immediately
+        }
     }
 
     /** Wire the crop source used to lazily load in-cloud thumbnails (off the FX thread). */
@@ -494,89 +539,6 @@ public class PointCloudView extends Pane {
     }
 
     /**
-     * Farthest-point sampling in embedding space (PURE, unit-testable). Returns up to
-     * {@code k} ordered cell indices (a subset of {@code memberIndices}) that spread across
-     * the members: the first is the class MEDOID (member nearest the class centroid), then
-     * each subsequent pick is the member with the greatest minimum distance to the
-     * already-selected set. Deterministic (ties resolve to the earliest member). Returns all
-     * members (in FPS order) when {@code k >= memberIndices.length}.
-     *
-     * @param ax            per-cell normalized X (indexed by cell index)
-     * @param ay            per-cell normalized Y
-     * @param az            per-cell normalized Z
-     * @param memberIndices the cell indices belonging to the class
-     * @param k             maximum number of representatives to return
-     */
-    static int[] farthestPointSample(float[] ax, float[] ay, float[] az, int[] memberIndices, int k) {
-        int m = memberIndices == null ? 0 : memberIndices.length;
-        int kk = Math.min(Math.max(0, k), m);
-        if (kk == 0) {
-            return new int[0];
-        }
-        // Class centroid.
-        double cx = 0, cy = 0, cz = 0;
-        for (int idx : memberIndices) {
-            cx += ax[idx];
-            cy += ay[idx];
-            cz += az[idx];
-        }
-        cx /= m;
-        cy /= m;
-        cz /= m;
-        // Medoid = member nearest the centroid (earliest on a tie).
-        int medoidPos = 0;
-        double bestDist = Double.MAX_VALUE;
-        for (int p = 0; p < m; p++) {
-            int idx = memberIndices[p];
-            double d = sq(ax[idx] - cx) + sq(ay[idx] - cy) + sq(az[idx] - cz);
-            if (d < bestDist) {
-                bestDist = d;
-                medoidPos = p;
-            }
-        }
-
-        boolean[] chosen = new boolean[m];
-        double[] minDist = new double[m]; // min distance of each member to the selected set
-        java.util.Arrays.fill(minDist, Double.MAX_VALUE);
-        int[] result = new int[kk];
-
-        int selPos = medoidPos;
-        for (int step = 0; step < kk; step++) {
-            chosen[selPos] = true;
-            result[step] = memberIndices[selPos];
-            int selIdx = memberIndices[selPos];
-            // Update each member's min distance to the newly selected point.
-            for (int p = 0; p < m; p++) {
-                if (chosen[p]) {
-                    continue;
-                }
-                int idx = memberIndices[p];
-                double d = sq(ax[idx] - ax[selIdx]) + sq(ay[idx] - ay[selIdx]) + sq(az[idx] - az[selIdx]);
-                if (d < minDist[p]) {
-                    minDist[p] = d;
-                }
-            }
-            // Next pick = member with the greatest min-distance (earliest on a tie).
-            if (step + 1 < kk) {
-                double far = -1;
-                int nextPos = -1;
-                for (int p = 0; p < m; p++) {
-                    if (!chosen[p] && minDist[p] > far) {
-                        far = minDist[p];
-                        nextPos = p;
-                    }
-                }
-                selPos = nextPos;
-            }
-        }
-        return result;
-    }
-
-    private static double sq(double v) {
-        return v * v;
-    }
-
-    /**
      * Thumbnail eligibility (PURE): a per-cluster representative is a thumbnail candidate at
      * ANY zoom, so it passes even when the footprint gate is closed; a non-representative is a
      * candidate only when the footprint gate is open ({@code thumbnailsActive}).
@@ -670,7 +632,9 @@ public class PointCloudView extends Pane {
         } else {
             thumbSelected = java.util.Collections.emptySet();
         }
-        int loadsThisFrame = 0;
+        // Selected-but-uncached cells to load this frame (enqueued after the loop, prioritized
+        // by distance from the cursor so the inspected region fills first).
+        java.util.List<Integer> pending = new java.util.ArrayList<>();
 
         for (int k = 0; k < visM; k++) {
             int i = drawOrder[k];
@@ -694,13 +658,8 @@ public class PointCloudView extends Pane {
                     gc.strokeRect(sx - s / 2, sy - s / 2, s, s);
                     continue;
                 }
-                // Not cached yet: enqueue an off-thread load (bounded per frame AND by
-                // the global in-flight cap) and fall through to draw a point this frame.
-                if (loadsThisFrame < MAX_LOADS_PER_FRAME && loadingIndices.size() < MAX_IN_FLIGHT) {
-                    if (enqueueCrop(i)) {
-                        loadsThisFrame++;
-                    }
-                }
+                // Not cached yet: mark for a prioritized load, and fall through to a point.
+                pending.add(i);
             }
 
             double pr = pointSize;
@@ -716,6 +675,26 @@ public class PointCloudView extends Pane {
             gc.setFill(Color.color(base.getRed(), base.getGreen(), base.getBlue(), alpha));
             gc.fillOval(sx - pr, sy - pr, pr * 2, pr * 2);
         }
+
+        // Enqueue pending crop loads nearest the cursor (or canvas center) first, up to the
+        // per-frame + global in-flight caps.
+        if (!pending.isEmpty()) {
+            double focusX = Double.isNaN(lastCursorX) ? w / 2 : lastCursorX;
+            double focusY = Double.isNaN(lastCursorY) ? h / 2 : lastCursorY;
+            pending.sort((a, b) -> Double.compare(
+                    sqDist(projX[a], projY[a], focusX, focusY), sqDist(projX[b], projY[b], focusX, focusY)));
+            int loads = 0;
+            for (int idx : pending) {
+                if (loads >= MAX_LOADS_PER_FRAME || loadingIndices.size() >= MAX_IN_FLIGHT) {
+                    break;
+                }
+                if (enqueueCrop(idx)) {
+                    loads++;
+                }
+            }
+        }
+        // Populating banner: still loading while any selected cell is uncached OR loads are in flight.
+        updatePopulating(!pending.isEmpty() || !loadingIndices.isEmpty());
 
         // Selection ring.
         if (selectedIndex >= 0 && selectedIndex < n && classVisible(data.classIdx[selectedIndex])) {
@@ -856,6 +835,22 @@ public class PointCloudView extends Pane {
         return true;
     }
 
+    private static double sqDist(double ax, double ay, double bx, double by) {
+        double dx = ax - bx;
+        double dy = ay - by;
+        return dx * dx + dy * dy;
+    }
+
+    /** Update the debounced populating signal: true fires immediately; false is delayed ~300ms. */
+    private void updatePopulating(boolean loadingNow) {
+        if (loadingNow) {
+            populatingHideDelay.stop();
+            populating.set(true);
+        } else if (populating.get()) {
+            populatingHideDelay.playFromStart(); // hide after the idle delay (debounce)
+        }
+    }
+
     /** Schedule at most one redraw for a burst of crop-load completions (FX thread only). */
     private void scheduleRedraw() {
         if (redrawScheduled) {
@@ -982,6 +977,9 @@ public class PointCloudView extends Pane {
     }
 
     private void onMouseMoved(MouseEvent e) {
+        // Track the cursor so crop loads can be prioritized toward what the user inspects.
+        lastCursorX = e.getX();
+        lastCursorY = e.getY();
         if (data == null || pickGrid == null) {
             return;
         }

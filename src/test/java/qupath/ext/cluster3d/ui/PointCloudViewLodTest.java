@@ -146,55 +146,7 @@ class PointCloudViewLodTest {
         assertThat(sel).isEmpty();
     }
 
-    // --- per-cluster representatives (farthest-point sampling) ---
-
-    @Test
-    void farthestPointSampleCollinearPicksMedoidThenExtremes() {
-        // Collinear 0..4; centroid = 2 -> medoid index 2, then the two extremes.
-        float[] ax = {0, 1, 2, 3, 4};
-        float[] zero = {0, 0, 0, 0, 0};
-        int[] members = {0, 1, 2, 3, 4};
-        int[] reps = PointCloudView.farthestPointSample(ax, zero, zero, members, 3);
-        assertThat(reps).containsExactly(2, 0, 4);
-    }
-
-    @Test
-    void farthestPointSampleReturnsAllWhenKExceedsMembers() {
-        float[] ax = {0, 1, 2, 3, 4};
-        float[] zero = {0, 0, 0, 0, 0};
-        int[] members = {0, 1, 2, 3, 4};
-        int[] reps = PointCloudView.farthestPointSample(ax, zero, zero, members, 10);
-        assertThat(reps).hasSize(5).containsExactlyInAnyOrder(0, 1, 2, 3, 4);
-        assertThat(reps[0]).isEqualTo(2); // medoid still first
-    }
-
-    @Test
-    void farthestPointSampleIsDeterministic() {
-        float[] ax = {0, 1, 2, 3, 4};
-        float[] zero = {0, 0, 0, 0, 0};
-        int[] members = {0, 1, 2, 3, 4};
-        int[] a = PointCloudView.farthestPointSample(ax, zero, zero, members, 4);
-        int[] b = PointCloudView.farthestPointSample(ax, zero, zero, members, 4);
-        assertThat(a).containsExactly(b);
-    }
-
-    @Test
-    void farthestPointSampleHonorsMemberIndicesAndEdgeCases() {
-        // members are a subset with non-contiguous indices.
-        float[] ax = new float[13];
-        float[] zero = new float[13];
-        ax[10] = 0;
-        ax[11] = 5;
-        ax[12] = 10;
-        int[] members = {10, 11, 12};
-        // centroid = 5 -> medoid 11; farthest tie (10 & 12 both 5 away) -> earliest member 10.
-        assertThat(PointCloudView.farthestPointSample(ax, zero, zero, members, 2))
-                .containsExactly(11, 10);
-        assertThat(PointCloudView.farthestPointSample(ax, zero, zero, members, 0))
-                .isEmpty();
-        assertThat(PointCloudView.farthestPointSample(ax, zero, zero, new int[0], 3))
-                .isEmpty();
-    }
+    // (farthestPointSample tests live in DetectionReaderTest now that the helper moved there.)
 
     @Test
     void representativeIsCandidateEvenWhenFootprintGateClosed() {

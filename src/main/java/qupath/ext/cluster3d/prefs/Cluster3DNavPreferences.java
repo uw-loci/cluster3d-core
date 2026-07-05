@@ -46,6 +46,8 @@ public final class Cluster3DNavPreferences {
     public static final boolean DEFAULT_HOVER_PREVIEW = false;
     public static final boolean DEFAULT_SHOW_CELL_IMAGES = false;
     public static final int DEFAULT_REPRESENTATIVES_PER_CLUSTER = 3;
+    public static final int DEFAULT_CELL_LIMIT_PER_IMAGE = 0; // 0 = no limit
+    public static final int DEFAULT_SUBSAMPLE_SEED = 42;
 
     private static DoubleProperty windowX;
     private static DoubleProperty windowY;
@@ -59,6 +61,8 @@ public final class Cluster3DNavPreferences {
     private static BooleanProperty hoverPreview;
     private static BooleanProperty showCellImages;
     private static IntegerProperty representativesPerCluster;
+    private static IntegerProperty cellLimitPerImage;
+    private static IntegerProperty subsampleSeed;
 
     private static boolean installed = false;
 
@@ -84,6 +88,9 @@ public final class Cluster3DNavPreferences {
         showCellImages = PathPrefs.createPersistentPreference(PREFIX + "showCellImages", DEFAULT_SHOW_CELL_IMAGES);
         representativesPerCluster = PathPrefs.createPersistentPreference(
                 PREFIX + "representativesPerCluster", DEFAULT_REPRESENTATIVES_PER_CLUSTER);
+        cellLimitPerImage =
+                PathPrefs.createPersistentPreference(PREFIX + "cellLimitPerImage", DEFAULT_CELL_LIMIT_PER_IMAGE);
+        subsampleSeed = PathPrefs.createPersistentPreference(PREFIX + "subsampleSeed", DEFAULT_SUBSAMPLE_SEED);
 
         installed = true;
         logger.info("Cluster 3D Navigator preferences installed");
@@ -148,6 +155,16 @@ public final class Cluster3DNavPreferences {
     public static IntegerProperty representativesPerClusterProperty() {
         ensureInstalled();
         return representativesPerCluster;
+    }
+
+    public static IntegerProperty cellLimitPerImageProperty() {
+        ensureInstalled();
+        return cellLimitPerImage;
+    }
+
+    public static IntegerProperty subsampleSeedProperty() {
+        ensureInstalled();
+        return subsampleSeed;
     }
 
     public static BooleanProperty showCellImagesProperty() {

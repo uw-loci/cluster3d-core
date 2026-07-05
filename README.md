@@ -6,7 +6,7 @@ code so multiple host frontends can embed it -- the standalone GPL
 [`qupath-extension-cluster-3d-navigator`](../qupath-extension-cluster-3d-navigator) shell (a
 Stage), and (later) a QP-CAT tab.
 
-- Coordinates: `io.github.uw-loci:cluster3d-core:0.1.0`
+- Coordinates: `io.github.uw-loci:cluster3d-core:0.1.1`
 - Package: `qupath.ext.cluster3d`
 - Produces a **normal library jar** (no shadow, no `QuPathExtension` service file -- the host
   never loads it as an extension).
