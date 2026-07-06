@@ -44,6 +44,10 @@ public final class Camera3D {
     private double panX = 0.0;
     private double panY = 0.0;
 
+    // Flat 2D mode: ignore yaw/pitch and the Z coordinate, so the projection is a
+    // straight top-down X/Y scatter (pan/zoom only). Used for genuine 2D embeddings.
+    private boolean mode2D = false;
+
     private double viewportW = 1.0;
     private double viewportH = 1.0;
 
@@ -65,6 +69,20 @@ public final class Camera3D {
 
     public double getViewportHeight() {
         return viewportH;
+    }
+
+    /**
+     * Enable flat 2D mode: rotation is disabled and the Z coordinate is ignored, so
+     * {@link #project} maps (x, y) straight to screen (pan/zoom only) and {@link #fitAll}
+     * fits the X/Y extent only. Use for genuine 2D embeddings (a 2D UMAP), NOT for two
+     * axes of a 3D embedding.
+     */
+    public void setMode2D(boolean mode2D) {
+        this.mode2D = mode2D;
+    }
+
+    public boolean isMode2D() {
+        return mode2D;
     }
 
     /**
@@ -93,11 +111,12 @@ public final class Camera3D {
         centerY = (minY + maxY) / 2.0;
         centerZ = (minZ + maxZ) / 2.0;
 
-        // Use the full diagonal extent so the cloud fits at any rotation.
+        // Use the full diagonal extent so the cloud fits at any rotation. In 2D mode the
+        // Z axis is ignored, so fit the X/Y extent only (no rotation to account for).
         double dx = maxX - minX;
         double dy = maxY - minY;
         double dz = maxZ - minZ;
-        double extent = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        double extent = mode2D ? Math.sqrt(dx * dx + dy * dy) : Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (extent <= 0) {
             extent = 1.0;
         }
@@ -123,6 +142,14 @@ public final class Camera3D {
         double dy = y - centerY;
         double dz = z - centerZ;
 
+        // Flat 2D: no rotation, ignore Z, constant depth. Straight (x, y) -> screen.
+        if (mode2D) {
+            double s2 = baseScale * zoom;
+            double sx2 = viewportW / 2.0 + panX + dx * s2;
+            double sy2 = viewportH / 2.0 + panY - dy * s2;
+            return new double[] {sx2, sy2, 0.0};
+        }
+
         double yawR = Math.toRadians(yaw);
         double pitchR = Math.toRadians(pitch);
         double cy = Math.cos(yawR), sy = Math.sin(yawR);
@@ -144,8 +171,11 @@ public final class Camera3D {
         return new double[] {screenX, screenY, z2};
     }
 
-    /** Rotate the camera by screen-drag deltas (degrees), clamping pitch. */
+    /** Rotate the camera by screen-drag deltas (degrees), clamping pitch. No-op in 2D mode. */
     public void rotate(double deltaYawDeg, double deltaPitchDeg) {
+        if (mode2D) {
+            return;
+        }
         yaw = (yaw + deltaYawDeg) % 360.0;
         setPitch(pitch + deltaPitchDeg);
     }

@@ -73,4 +73,54 @@ class AxisAutoDetectTest {
         assertThat(AxisAutoDetect.detect(List.of())).isEmpty();
         assertThat(AxisAutoDetect.detect(null)).isEmpty();
     }
+
+    // --- 2D pair detection ---
+
+    @Test
+    void detectsPairFromTwoComponentEmbedding() {
+        List<String> r = AxisAutoDetect.detectPair(List.of("UMAP1", "UMAP2", "Area"));
+        assertThat(r).containsExactly("UMAP1", "UMAP2");
+        assertThat(AxisAutoDetect.detectedFamilyPair(List.of("UMAP1", "UMAP2")))
+                .isEqualTo("UMAP");
+    }
+
+    @Test
+    void detectsPairFromThreeComponentEmbedding() {
+        // Only the first two components are used for the 2D pair.
+        assertThat(AxisAutoDetect.detectPair(List.of("UMAP1", "UMAP2", "UMAP3")))
+                .containsExactly("UMAP1", "UMAP2");
+    }
+
+    @Test
+    void pairRequiresTwoComponents() {
+        assertThat(AxisAutoDetect.detectPair(List.of("UMAP1"))).isEmpty();
+        assertThat(AxisAutoDetect.detectPair(List.of("Area", "Perimeter"))).isEmpty();
+    }
+
+    // --- two-of-three scientific-correctness guard ---
+
+    @Test
+    void twoOfThreeFlagsAxesFromA3dEmbedding() {
+        List<String> names = List.of("UMAP1", "UMAP2", "UMAP3", "Area");
+        assertThat(AxisAutoDetect.isTwoOfThree(names, "UMAP1", "UMAP2")).isTrue();
+    }
+
+    @Test
+    void twoOfThreeDoesNotFlagAGenuine2dEmbedding() {
+        List<String> names = List.of("UMAP1", "UMAP2", "Area", "Perimeter");
+        assertThat(AxisAutoDetect.isTwoOfThree(names, "UMAP1", "UMAP2")).isFalse();
+    }
+
+    @Test
+    void twoOfThreeDoesNotFlagNonEmbeddingAxes() {
+        List<String> names = List.of("UMAP1", "UMAP2", "UMAP3", "Area", "Perimeter");
+        assertThat(AxisAutoDetect.isTwoOfThree(names, "Area", "Perimeter")).isFalse();
+    }
+
+    @Test
+    void twoOfThreeRequiresSameFamily() {
+        // A UMAP axis and a PCA axis are not two components of one embedding.
+        List<String> names = List.of("UMAP1", "UMAP2", "UMAP3", "PCA1", "PCA2", "PCA3");
+        assertThat(AxisAutoDetect.isTwoOfThree(names, "UMAP1", "PCA2")).isFalse();
+    }
 }

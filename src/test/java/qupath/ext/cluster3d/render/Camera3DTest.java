@@ -66,6 +66,32 @@ class Camera3DTest {
     }
 
     @Test
+    void mode2DIgnoresZAndRotation() {
+        Camera3D cam = new Camera3D();
+        cam.setViewport(200, 200);
+        cam.setMode2D(true);
+        float[] pts = {-1, 1};
+        cam.fitAll(pts, pts, pts);
+        double[] center = cam.project(0, 0, 0);
+        // Two points differing only in Z project to the exact same screen position + depth 0.
+        double[] a = cam.project(0.4, -0.3, 0.0);
+        double[] b = cam.project(0.4, -0.3, 0.9);
+        assertThat(a).containsExactly(b);
+        assertThat(a[2]).isEqualTo(0.0);
+        // Rotation is a no-op in 2D, so the projection does not change after a rotate.
+        double[] before = cam.project(0.4, -0.3, 0.0);
+        cam.rotate(45, 30);
+        double[] after = cam.project(0.4, -0.3, 0.0);
+        assertThat(after).containsExactly(before);
+        // +X is right, +Y is up (smaller screen-y), straight from data space.
+        double[] plusX = cam.project(0.5, 0, 0);
+        double[] plusY = cam.project(0, 0.5, 0);
+        assertThat(plusX[0]).isGreaterThan(center[0]);
+        assertThat(plusX[1]).isCloseTo(center[1], within(1e-6));
+        assertThat(plusY[1]).isLessThan(center[1]);
+    }
+
+    @Test
     void axesMapToExpectedScreenDirections() {
         Camera3D cam = new Camera3D();
         cam.setViewport(200, 200);

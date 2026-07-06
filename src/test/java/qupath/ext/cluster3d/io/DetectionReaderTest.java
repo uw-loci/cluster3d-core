@@ -124,6 +124,29 @@ class DetectionReaderTest {
         assertThat(d.xName).isEqualTo("X");
     }
 
+    @Test
+    void buildPointCloud2DIgnoresZAndOnlyOmitsOnXorY() {
+        List<DetectionReader.CellRecord> records = new ArrayList<>();
+        CellRef ref = new CellRef("img", "image.tiff", 0, 0, 5);
+        records.add(new DetectionReader.CellRecord(ref, null, map("X", 0.0, "Y", 0.0)));
+        records.add(new DetectionReader.CellRecord(ref, null, map("X", 10.0, "Y", 2.0)));
+        // A missing/NaN Z must NOT omit the cell in 2D (Z is not used).
+        records.add(new DetectionReader.CellRecord(ref, null, map("X", 5.0, "Y", 1.0, "Z", Double.NaN)));
+        // Omitted: missing a finite Y.
+        records.add(new DetectionReader.CellRecord(ref, null, map("X", 3.0, "Y", Double.NaN)));
+
+        PointCloudData d = DetectionReader.buildPointCloud2D(records, "X", "Y");
+        assertThat(d.size()).isEqualTo(3);
+        assertThat(d.omittedCount).isEqualTo(1);
+        // Z is flat (all zero) so the cloud lies in a plane.
+        assertThat(d.rawZ).containsExactly(0.0, 0.0, 0.0);
+        for (float z : d.az) {
+            assertThat((double) z).isEqualTo(0.0);
+        }
+        assertThat(d.xName).isEqualTo("X");
+        assertThat(d.zName).isEqualTo("");
+    }
+
     // --- farthest-point sampling ---
 
     @Test

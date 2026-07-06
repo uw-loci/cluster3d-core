@@ -94,9 +94,18 @@ public class Cluster3DNavigatorPane extends BorderPane {
     // scope can hide them wholesale via initializeForHost.
     private final HBox modeControls = new HBox(6);
     private final Label pointsLabel = new Label("Points: 0 / 0");
+    // View dimensionality (flat 2D scatter vs rotatable 3D cloud).
+    private final ToggleGroup dimGroup = new ToggleGroup();
+    private final RadioButton dim3D = new RadioButton("3D");
+    private final RadioButton dim2D = new RadioButton("2D");
+    private boolean twoD = false; // effective state (pref OR forced when < 3 numeric axes)
+    private boolean suppressDimEvents = false;
     private final ComboBox<String> axisX = new ComboBox<>();
     private final ComboBox<String> axisY = new ComboBox<>();
     private final ComboBox<String> axisZ = new ComboBox<>();
+    private final Label zLabel = new Label("Z");
+    // Non-blocking warning shown when a 2D view plots two axes of a 3D embedding.
+    private final Label twoOfThreeWarn = new Label("");
     private final Label autoTag = new Label("");
     private final Label statusLabel = new Label("");
     private final Label noteLabel = new Label("");
@@ -280,6 +289,24 @@ public class Cluster3DNavigatorPane extends BorderPane {
         HBox limitRow = new HBox(4, new Label("Cell limit per image"), cellLimit, new Label("Seed"), seed, limitHelp);
         limitRow.setAlignment(Pos.CENTER_LEFT);
 
+        // View dimensionality toggle. 2D = flat X/Y scatter (for genuine 2D embeddings),
+        // 3D = rotatable cloud (needs a 3-component embedding). Persisted; the 3D option is
+        // disabled when the data has fewer than 3 numeric measurements.
+        dim3D.setToggleGroup(dimGroup);
+        dim2D.setToggleGroup(dimGroup);
+        dim3D.setTooltip(new Tooltip("Rotatable 3D cloud. Needs a 3-component embedding (e.g. UMAP1/2/3)."));
+        dim2D.setTooltip(new Tooltip(
+                "Flat top-down X/Y scatter. Use a genuine 2D embedding (e.g. a 2D UMAP), "
+                        + "NOT two axes of a 3D embedding."));
+        twoD = "2d".equals(Cluster3DNavPreferences.dimensionsProperty().get());
+        suppressDimEvents = true;
+        (twoD ? dim2D : dim3D).setSelected(true);
+        suppressDimEvents = false;
+        dimGroup.selectedToggleProperty().addListener((o, a, b) -> onDimensionChanged());
+        HBox dimControls = new HBox(6, new Label("View:"), dim3D, dim2D);
+        dimControls.setAlignment(Pos.CENTER_LEFT);
+        cloudView.setTwoD(twoD);
+
         axisX.setTooltip(new Tooltip("Measurement plotted on the X axis."));
         axisY.setTooltip(new Tooltip("Measurement plotted on the Y axis."));
         axisZ.setTooltip(new Tooltip("Measurement plotted on the depth (Z) axis."));
@@ -293,9 +320,9 @@ public class Cluster3DNavigatorPane extends BorderPane {
         autoTag.setStyle(ThemeUtils.autoDetectStyle(false));
         autoTag.setTooltip(
                 new Tooltip(
-                        "These three axes were detected automatically from measurement names. Change any of them to override."));
+                        "These axes were detected automatically from measurement names. Change any of them to override."));
         Button changeAxes = new Button("Change axes...");
-        changeAxes.setTooltip(new Tooltip("Pick which three numeric measurements map to X, Y, and Z."));
+        changeAxes.setTooltip(new Tooltip("Pick which numeric measurements map to the axes."));
         changeAxes.setOnAction(e -> openAxisPicker());
 
         // Quick toggle: moved out of the collapsed Display options so it is one click away,
@@ -317,7 +344,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
                 axisX,
                 new Label("Y"),
                 axisY,
-                new Label("Z"),
+                zLabel,
                 axisZ,
                 autoTag,
                 changeAxes,
@@ -327,14 +354,20 @@ public class Cluster3DNavigatorPane extends BorderPane {
         HBox pointsReset = new HBox(8, pointsLabel, reset);
         pointsReset.setAlignment(Pos.CENTER_LEFT);
 
+        // Two-of-three warning (hidden until it applies), styled as a warning + wrapping.
+        twoOfThreeWarn.setStyle(ThemeUtils.warningStyle(false));
+        twoOfThreeWarn.setWrapText(true);
+        twoOfThreeWarn.setVisible(false);
+        twoOfThreeWarn.setManaged(false);
+
         // A FlowPane so the control GROUPS wrap to a new line at narrow widths instead of
         // clipping off the right edge -- each HBox group stays intact and wraps as a unit,
         // so the Cell limit / Seed / "?" controls are always reachable at the min 820 width.
-        FlowPane controls = new FlowPane(12, 6, modeControls, axisRow, limitRow, pointsReset);
+        FlowPane controls = new FlowPane(12, 6, modeControls, dimControls, axisRow, limitRow, pointsReset);
         controls.setAlignment(Pos.CENTER_LEFT);
         controls.setPadding(new Insets(6));
 
-        VBox top = new VBox(controls, buildDisplayOptions());
+        VBox top = new VBox(controls, twoOfThreeWarn, buildDisplayOptions());
         setTop(top);
 
         // Center: canvas + busy overlay.
@@ -623,9 +656,37 @@ public class Cluster3DNavigatorPane extends BorderPane {
         busyLabel.setText(message);
         axisX.setDisable(busy);
         axisY.setDisable(busy);
-        axisZ.setDisable(busy);
+        axisZ.setDisable(busy || twoD); // Z stays disabled in flat 2D
         modeCurrent.setDisable(busy);
         modeProject.setDisable(busy || qupath.getProject() == null);
+    }
+
+    /** Handle a 2D/3D radio toggle: persist the choice and re-read (2D builds differently). */
+    private void onDimensionChanged() {
+        if (suppressDimEvents) {
+            return;
+        }
+        Cluster3DNavPreferences.dimensionsProperty().set(dim2D.isSelected() ? "2d" : "3d");
+        reload();
+    }
+
+    /**
+     * Apply the effective view dimensionality for the current data: 2D when the user
+     * chose it OR when there are fewer than 3 numeric measurements (3D impossible). Updates
+     * the radios (without firing), disables 3D when it cannot apply, toggles the Z controls,
+     * and switches the view. Call before choosing axes / building the cloud.
+     */
+    private void applyDimensions(int numericCount) {
+        boolean canDo3D = numericCount >= 3;
+        boolean want2D = "2d".equals(Cluster3DNavPreferences.dimensionsProperty().get());
+        twoD = want2D || !canDo3D;
+        suppressDimEvents = true;
+        (twoD ? dim2D : dim3D).setSelected(true);
+        dim3D.setDisable(!canDo3D);
+        suppressDimEvents = false;
+        zLabel.setDisable(twoD);
+        axisZ.setDisable(twoD);
+        cloudView.setTwoD(twoD);
     }
 
     /** Prompt the user to pick a project-image subset; store it. Returns false if cancelled. */
@@ -671,6 +732,9 @@ public class Cluster3DNavigatorPane extends BorderPane {
     /** Read (off-thread) then rebuild the cloud for the current mode. */
     public void reload() {
         title.set("Cluster 3D Navigator - " + currentImageName());
+        // Stale from a prior dataset until buildAndShow re-evaluates it.
+        twoOfThreeWarn.setVisible(false);
+        twoOfThreeWarn.setManaged(false);
         // In host mode the scope is fixed: read the injected entries if any, else the
         // current image -- never the interactive mode toggle, never a prompt.
         boolean hasHostEntries = selectedEntries != null && !selectedEntries.isEmpty();
@@ -782,22 +846,34 @@ public class Cluster3DNavigatorPane extends BorderPane {
             clearCloud("No detections in this image. Run a detection or clustering step first.");
             return;
         }
-        if (numeric.size() < 3) {
-            clearCloud("Need at least 3 numeric measurements to plot in 3D. This image has " + numeric.size() + ".");
+        if (numeric.size() < 2) {
+            clearCloud("Need at least 2 numeric measurements to plot. This image has " + numeric.size() + ".");
             return;
         }
 
-        // Choose axes: explicit user request, else remembered per project, else auto-detect.
-        String[] chosen = chooseAxes(numeric);
-        suppressAxisEvents = true;
-        axisX.setValue(chosen[0]);
-        axisY.setValue(chosen[1]);
-        axisZ.setValue(chosen[2]);
-        suppressAxisEvents = false;
+        // Decide 2D vs 3D for this data (forces 2D when < 3 numeric measurements) and
+        // wire the view + Z controls accordingly before choosing axes.
+        applyDimensions(numeric.size());
 
-        // Build from the read result, then DROP it: the per-cell measurement maps are
-        // not retained -- only the built PointCloudData stays alive for the session.
-        buildAndShow(result.records, chosen[0], chosen[1], chosen[2]);
+        // Choose axes: explicit user request, else remembered per project, else auto-detect.
+        // Build from the read result, then DROP it: the per-cell measurement maps are not
+        // retained -- only the built PointCloudData stays alive for the session.
+        if (twoD) {
+            String[] chosen = chooseAxes2D(numeric);
+            suppressAxisEvents = true;
+            axisX.setValue(chosen[0]);
+            axisY.setValue(chosen[1]);
+            suppressAxisEvents = false;
+            buildAndShow(result.records, chosen[0], chosen[1], null);
+        } else {
+            String[] chosen = chooseAxes(numeric);
+            suppressAxisEvents = true;
+            axisX.setValue(chosen[0]);
+            axisY.setValue(chosen[1]);
+            axisZ.setValue(chosen[2]);
+            suppressAxisEvents = false;
+            buildAndShow(result.records, chosen[0], chosen[1], chosen[2]);
+        }
     }
 
     private void clearCloud(String message) {
@@ -807,6 +883,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
         legend.setData(null);
         cloudView.setEmptyMessage(message);
         autoTag.setText("");
+        twoOfThreeWarn.setVisible(false);
+        twoOfThreeWarn.setManaged(false);
         updatePointsLabel();
         updateNotes();
     }
@@ -819,14 +897,19 @@ public class Cluster3DNavigatorPane extends BorderPane {
         previewCaption.setText("");
     }
 
+    /** Build + show the cloud for the chosen axes. {@code z == null} builds a flat 2D cloud. */
     private void buildAndShow(List<DetectionReader.CellRecord> records, String x, String y, String z) {
         resetPreview();
-        data = DetectionReader.buildPointCloud(records, x, y, z);
+        data = (z == null)
+                ? DetectionReader.buildPointCloud2D(records, x, y)
+                : DetectionReader.buildPointCloud(records, x, y, z);
         if (data.size() == 0) {
             data = null;
             cloudView.setData(null);
             legend.setData(null);
-            cloudView.setEmptyMessage("No cells have finite values on all three chosen axes.");
+            cloudView.setEmptyMessage(z == null
+                    ? "No cells have finite values on both chosen axes."
+                    : "No cells have finite values on all three chosen axes.");
             updatePointsLabel();
             updateNotes();
             return;
@@ -835,9 +918,22 @@ public class Cluster3DNavigatorPane extends BorderPane {
         cloudView.setData(data);
         legend.setData(data);
         cloudView.setVisibleMask(legend.getVisibleMask());
-        Cluster3DNavPreferences.setLastAxes(projectKey(), x, y, z);
+        Cluster3DNavPreferences.setLastAxes(projectKey(), x, y, z == null ? "" : z);
+        updateTwoOfThreeWarning(x, y);
         updatePointsLabel();
         updateNotes();
+    }
+
+    /** Show/hide the "2 axes of a 3D embedding" warning for the current 2D axis choice. */
+    private void updateTwoOfThreeWarning(String x, String y) {
+        boolean warn = twoD && AxisAutoDetect.isTwoOfThree(numericAxes, x, y);
+        twoOfThreeWarn.setText(warn
+                ? "Warning: X and Y are two components of a 3D embedding. A 2D view of a 3D embedding is "
+                        + "not a true 2D embedding -- for a correct 2D view, compute a 2D embedding (e.g. a 2D UMAP)."
+                : "");
+        twoOfThreeWarn.setStyle(ThemeUtils.warningStyle(ThemeUtils.isDark(getScene())));
+        twoOfThreeWarn.setVisible(warn);
+        twoOfThreeWarn.setManaged(warn);
     }
 
     private String[] chooseAxes(List<String> numeric) {
@@ -859,6 +955,26 @@ public class Cluster3DNavigatorPane extends BorderPane {
         return new String[] {numeric.get(0), numeric.get(1), numeric.get(2)};
     }
 
+    /** Choose the 2 axes for a flat 2D view: explicit request, else remembered, else auto-detect. */
+    private String[] chooseAxes2D(List<String> numeric) {
+        if (isValid2D(requestedAxes, numeric)) {
+            autoTag.setText("");
+            return new String[] {requestedAxes[0], requestedAxes[1]};
+        }
+        String[] remembered = Cluster3DNavPreferences.getLastAxes(projectKey());
+        if (isValid2D(remembered, numeric)) {
+            autoTag.setText("");
+            return new String[] {remembered[0], remembered[1]};
+        }
+        List<String> pair = AxisAutoDetect.detectPair(numeric);
+        if (pair.size() == 2) {
+            autoTag.setText("(auto-detected: " + AxisAutoDetect.detectedFamilyPair(numeric) + ")");
+            return pair.toArray(new String[0]);
+        }
+        autoTag.setText("(no 2D embedding detected -- pick 2 axes)");
+        return new String[] {numeric.get(0), numeric.get(1)};
+    }
+
     private static boolean isValid(String[] axes, List<String> numeric) {
         if (axes == null || axes.length != 3) {
             return false;
@@ -871,18 +987,39 @@ public class Cluster3DNavigatorPane extends BorderPane {
         return true;
     }
 
+    /** True if the first two entries of {@code axes} are distinct-enough, non-blank, present columns. */
+    private static boolean isValid2D(String[] axes, List<String> numeric) {
+        if (axes == null || axes.length < 2) {
+            return false;
+        }
+        for (int i = 0; i < 2; i++) {
+            if (axes[i] == null || axes[i].isBlank() || !numeric.contains(axes[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private void onAxisComboChanged() {
         if (suppressAxisEvents) {
             return;
         }
         String x = axisX.getValue();
         String y = axisY.getValue();
-        String z = axisZ.getValue();
-        if (x == null || y == null || z == null) {
+        if (x == null || y == null) {
             return;
         }
         // The measurement maps are not retained, so a new axis choice re-reads.
         autoTag.setText("");
+        if (twoD) {
+            requestedAxes = new String[] {x, y};
+            reload();
+            return;
+        }
+        String z = axisZ.getValue();
+        if (z == null) {
+            return;
+        }
         requestedAxes = new String[] {x, y, z};
         reload();
     }
@@ -935,22 +1072,25 @@ public class Cluster3DNavigatorPane extends BorderPane {
     }
 
     private void openAxisPicker() {
-        if (numericAxes == null || numericAxes.size() < 3) {
+        int need = twoD ? 2 : 3;
+        if (numericAxes == null || numericAxes.size() < need) {
             return;
         }
         String[] remembered = Cluster3DNavPreferences.getLastAxes(projectKey());
+        boolean rememberInit = twoD ? isValid2D(remembered, numericAxes) : isValid(remembered, numericAxes);
         Optional<AxisPickerDialog.Result> res = AxisPickerDialog.show(
                 ownerWindow(),
                 numericAxes,
                 axisX.getValue(),
                 axisY.getValue(),
                 axisZ.getValue(),
-                isValid(remembered, numericAxes));
+                rememberInit,
+                twoD);
         res.ifPresent(r -> {
             autoTag.setText("");
-            requestedAxes = new String[] {r.x, r.y, r.z};
+            requestedAxes = twoD ? new String[] {r.x, r.y} : new String[] {r.x, r.y, r.z};
             if (r.remember) {
-                Cluster3DNavPreferences.setLastAxes(projectKey(), r.x, r.y, r.z);
+                Cluster3DNavPreferences.setLastAxes(projectKey(), r.x, r.y, twoD ? "" : r.z);
             }
             // Re-read (measurement maps are not retained) and rebuild for the new axes.
             reload();

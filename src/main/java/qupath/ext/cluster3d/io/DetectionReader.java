@@ -283,6 +283,22 @@ public final class DetectionReader {
      * {@link PointCloudData#omittedCount}. No disk access.
      */
     public static PointCloudData buildPointCloud(List<CellRecord> records, String xName, String yName, String zName) {
+        return build(records, xName, yName, zName);
+    }
+
+    /**
+     * Build a plottable FLAT 2D cloud from records for the given axis PAIR (Z is not used).
+     * Cells missing a finite value on X or Y are omitted; Z is set to a constant so the
+     * cloud renders flat. Use for a genuine 2D embedding (a 2D UMAP), NOT for two axes of
+     * a 3D embedding. No disk access.
+     */
+    public static PointCloudData buildPointCloud2D(List<CellRecord> records, String xName, String yName) {
+        return build(records, xName, yName, null);
+    }
+
+    /** Shared build: {@code zName == null} builds a flat 2D cloud (Z ignored, set to 0). */
+    private static PointCloudData build(List<CellRecord> records, String xName, String yName, String zName) {
+        boolean twoD = zName == null;
         List<Double> xs = new ArrayList<>();
         List<Double> ys = new ArrayList<>();
         List<Double> zs = new ArrayList<>();
@@ -295,7 +311,7 @@ public final class DetectionReader {
         for (CellRecord rec : records) {
             Double vx = rec.measurements.get(xName);
             Double vy = rec.measurements.get(yName);
-            Double vz = rec.measurements.get(zName);
+            Double vz = twoD ? Double.valueOf(0.0) : rec.measurements.get(zName);
             if (!finite(vx) || !finite(vy) || !finite(vz)) {
                 omitted++;
                 continue;
@@ -346,7 +362,7 @@ public final class DetectionReader {
                 refs.toArray(new CellRef[0]),
                 xName,
                 yName,
-                zName,
+                twoD ? "" : zName,
                 omitted);
     }
 

@@ -129,6 +129,8 @@ public class PointCloudView extends Pane {
     private Color backgroundColor = null; // null = auto (match QuPath theme)
     private boolean hoverPreviewEnabled = false;
     private boolean showCellImages = false;
+    // Flat 2D mode: no rotation (left-drag pans), Z ignored, no Z tooltip/tripod line.
+    private boolean twoD = false;
     // Per-class ordered representative cell indices (medoid + farthest-point spread);
     // classReps[c] length <= MAX_REPRESENTATIVES. Recomputed on setData.
     private int[][] classReps = new int[0][];
@@ -203,12 +205,10 @@ public class PointCloudView extends Pane {
         populatingHideDelay.setOnFinished(e -> populating.set(false));
         getChildren().add(canvas);
         tooltip.setShowDelay(Duration.millis(200));
-        tooltip.setText(GESTURE_HINT);
+        tooltip.setText(gestureHint());
         Tooltip.install(canvas, tooltip);
         canvas.setFocusTraversable(true);
-        canvas.setAccessibleText("3D point cloud of clustered cells. Left-drag to rotate, "
-                + "scroll to zoom, middle-drag or Shift+drag to pan, click a point to select and center "
-                + "that cell. Use the Reset view button to return to the default view.");
+        canvas.setAccessibleText(accessibilityText());
 
         canvas.setOnScroll(this::onScroll);
         canvas.setOnMousePressed(this::onMousePressed);
@@ -339,6 +339,24 @@ public class PointCloudView extends Pane {
 
     private boolean isRepCandidate(int i) {
         return i >= 0 && i < repCandidate.length && repCandidate[i];
+    }
+
+    /**
+     * Switch between the rotatable 3D cloud and a flat top-down 2D scatter. In 2D the
+     * camera ignores rotation + Z (left-drag pans), and the Z tooltip/tripod line is hidden.
+     * Call before {@link #setData} so the fit-all uses the correct (X/Y-only) extent.
+     */
+    public void setTwoD(boolean twoD) {
+        this.twoD = twoD;
+        camera.setMode2D(twoD);
+        if (data != null) {
+            camera.fitAll(data.ax, data.ay, data.az);
+            camera.reset();
+        }
+        tooltip.setText(gestureHint());
+        canvas.setAccessibleText(accessibilityText());
+        invalidateProjection();
+        redraw();
     }
 
     /** Enable/disable VEST-style in-cloud cell thumbnails (shown only when zoomed in). */
@@ -887,7 +905,10 @@ public class PointCloudView extends Pane {
         double[] pz = camera.project(0, 0, 0.3);
         drawAxis(gc, ox, oy, o, px, len, Color.rgb(220, 80, 80), "X");
         drawAxis(gc, ox, oy, o, py, len, Color.rgb(80, 200, 80), "Y");
-        drawAxis(gc, ox, oy, o, pz, len, Color.rgb(90, 140, 230), "Z");
+        // In flat 2D the Z axis has no screen direction -- omit it.
+        if (!twoD) {
+            drawAxis(gc, ox, oy, o, pz, len, Color.rgb(90, 140, 230), "Z");
+        }
     }
 
     private void drawAxis(
@@ -943,7 +964,10 @@ public class PointCloudView extends Pane {
         lastDragY = e.getY();
 
         // Pan on middle-drag OR Shift+left-drag (trackpad / no-middle-button fallback).
-        boolean panGesture = dragButton == MouseButton.MIDDLE || (dragButton == MouseButton.PRIMARY && e.isShiftDown());
+        // In flat 2D there is nothing to rotate, so a plain left-drag pans too.
+        boolean panGesture = dragButton == MouseButton.MIDDLE
+                || (dragButton == MouseButton.PRIMARY && e.isShiftDown())
+                || (dragButton == MouseButton.PRIMARY && twoD);
         if (panGesture) {
             camera.pan(dx, dy);
             invalidateProjection();
@@ -1009,27 +1033,54 @@ public class PointCloudView extends Pane {
         lastHoverIdx = idx;
         if (idx >= 0) {
             // Show the RAW measurement values against the real axis names (the
-            // normalized render coords are internal to drawing only).
-            tooltip.setText(String.format(
-                    "%s%n%s %.3g%n%s %.3g%n%s %.3g",
-                    data.classDisplayName(data.classIdx[idx]),
-                    data.xName,
-                    data.rawX[idx],
-                    data.yName,
-                    data.rawY[idx],
-                    data.zName,
-                    data.rawZ[idx]));
+            // normalized render coords are internal to drawing only). In 2D the Z
+            // axis is unused, so omit its line.
+            String text = twoD
+                    ? String.format(
+                            "%s%n%s %.3g%n%s %.3g",
+                            data.classDisplayName(data.classIdx[idx]),
+                            data.xName,
+                            data.rawX[idx],
+                            data.yName,
+                            data.rawY[idx])
+                    : String.format(
+                            "%s%n%s %.3g%n%s %.3g%n%s %.3g",
+                            data.classDisplayName(data.classIdx[idx]),
+                            data.xName,
+                            data.rawX[idx],
+                            data.yName,
+                            data.rawY[idx],
+                            data.zName,
+                            data.rawZ[idx]);
+            tooltip.setText(text);
             if (hoverPreviewEnabled) {
                 onPointHovered.accept(idx);
             }
         } else {
-            tooltip.setText(GESTURE_HINT);
+            tooltip.setText(gestureHint());
         }
     }
 
-    /** Gesture cheat-sheet shown on the Canvas tooltip when not over a point. */
+    /** Gesture cheat-sheet shown on the Canvas tooltip when not over a point (3D). */
     static final String GESTURE_HINT = "Left-drag to rotate, scroll to zoom, middle-drag or Shift+drag to pan. "
             + "Click a point to center and select that cell.";
+
+    /** Gesture cheat-sheet for the flat 2D view (no rotation). */
+    static final String GESTURE_HINT_2D = "Left-drag or middle-drag to pan, scroll to zoom. "
+            + "Click a point to center and select that cell.";
+
+    private String gestureHint() {
+        return twoD ? GESTURE_HINT_2D : GESTURE_HINT;
+    }
+
+    private String accessibilityText() {
+        return twoD
+                ? "Flat 2D scatter of clustered cells. Left-drag or middle-drag to pan, scroll to zoom, "
+                        + "click a point to select and center that cell. Use the Reset view button to fit all points."
+                : "3D point cloud of clustered cells. Left-drag to rotate, scroll to zoom, middle-drag or "
+                        + "Shift+drag to pan, click a point to select and center that cell. Use the Reset view "
+                        + "button to return to the default view.";
+    }
 
     /** Best-effort dark-theme detection from the applied stylesheets (name-based). */
     private boolean isDarkTheme() {

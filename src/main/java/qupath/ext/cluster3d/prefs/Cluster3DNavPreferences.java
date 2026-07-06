@@ -39,6 +39,7 @@ public final class Cluster3DNavPreferences {
     public static final double DEFAULT_WINDOW_W = 1040;
     public static final double DEFAULT_WINDOW_H = 680;
     public static final String DEFAULT_MODE = "current"; // "current" | "project"
+    public static final String DEFAULT_DIMENSIONS = "3d"; // "2d" | "3d"
     public static final double DEFAULT_CROP_SCALE = 3.0;
     public static final double DEFAULT_POINT_SIZE = 2.0;
     public static final boolean DEFAULT_DEPTH_CUE = true;
@@ -55,6 +56,7 @@ public final class Cluster3DNavPreferences {
     private static DoubleProperty windowW;
     private static DoubleProperty windowH;
     private static StringProperty mode;
+    private static StringProperty dimensions;
     private static StringProperty backgroundColor;
     private static DoubleProperty cropScale;
     private static DoubleProperty pointSize;
@@ -82,6 +84,7 @@ public final class Cluster3DNavPreferences {
         windowW = PathPrefs.createPersistentPreference(PREFIX + "windowW", DEFAULT_WINDOW_W);
         windowH = PathPrefs.createPersistentPreference(PREFIX + "windowH", DEFAULT_WINDOW_H);
         mode = PathPrefs.createPersistentPreference(PREFIX + "mode", DEFAULT_MODE);
+        dimensions = PathPrefs.createPersistentPreference(PREFIX + "dimensions", DEFAULT_DIMENSIONS);
         cropScale = PathPrefs.createPersistentPreference(PREFIX + "cropScale", DEFAULT_CROP_SCALE);
         pointSize = PathPrefs.createPersistentPreference(PREFIX + "pointSize", DEFAULT_POINT_SIZE);
         depthCue = PathPrefs.createPersistentPreference(PREFIX + "depthCue", DEFAULT_DEPTH_CUE);
@@ -128,6 +131,12 @@ public final class Cluster3DNavPreferences {
     public static StringProperty modeProperty() {
         ensureInstalled();
         return mode;
+    }
+
+    /** View dimensionality: "2d" (flat X/Y scatter) or "3d" (rotatable cloud). */
+    public static StringProperty dimensionsProperty() {
+        ensureInstalled();
+        return dimensions;
     }
 
     /** Background color as a web hex string ("#RRGGBB"), or empty to match the QuPath theme. */
