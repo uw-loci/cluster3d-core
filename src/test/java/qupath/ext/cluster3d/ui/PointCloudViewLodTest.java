@@ -94,7 +94,7 @@ class PointCloudViewLodTest {
         double[] sx = {100, 115};
         double[] sy = {100, 100};
         double[] depth = {5.0, 2.0};
-        Set<Integer> sel = PointCloudView.selectVisibleThumbnails(order, 2, sx, sy, depth, S, 800, 600, 120, MAXO);
+        Set<Integer> sel = PointCloudView.selectVisibleThumbnails(order, 2, sx, sy, depth, S, 800, 600, 120, MAXO, 0);
         assertThat(sel).containsExactly(1);
     }
 
@@ -105,7 +105,7 @@ class PointCloudViewLodTest {
         double[] sx = {100, 130};
         double[] sy = {100, 100};
         double[] depth = {5.0, 5.0};
-        Set<Integer> sel = PointCloudView.selectVisibleThumbnails(order, 2, sx, sy, depth, S, 800, 600, 120, MAXO);
+        Set<Integer> sel = PointCloudView.selectVisibleThumbnails(order, 2, sx, sy, depth, S, 800, 600, 120, MAXO, 0);
         assertThat(sel).containsExactlyInAnyOrder(0, 1);
     }
 
@@ -116,11 +116,11 @@ class PointCloudViewLodTest {
         double[] atBoundaryX = {100, 127};
         double[] sy = {100, 100};
         double[] depth = {5.0, 2.0};
-        assertThat(PointCloudView.selectVisibleThumbnails(order, 2, atBoundaryX, sy, depth, S, 800, 600, 120, MAXO))
+        assertThat(PointCloudView.selectVisibleThumbnails(order, 2, atBoundaryX, sy, depth, S, 800, 600, 120, MAXO, 0))
                 .containsExactlyInAnyOrder(0, 1);
         // dx = 26 -> frac = (30-26)/30 = 0.133 > 0.10 -> only the nearer (index 1).
         double[] justOverX = {100, 126};
-        assertThat(PointCloudView.selectVisibleThumbnails(order, 2, justOverX, sy, depth, S, 800, 600, 120, MAXO))
+        assertThat(PointCloudView.selectVisibleThumbnails(order, 2, justOverX, sy, depth, S, 800, 600, 120, MAXO, 0))
                 .containsExactly(1);
     }
 
@@ -132,8 +132,25 @@ class PointCloudViewLodTest {
         double[] sx = {0, 10, 20, 30, 40};
         double[] sy = {0, 0, 0, 0, 0};
         double[] depth = {0, 10, 20, 30, 40};
-        Set<Integer> sel = PointCloudView.selectVisibleThumbnails(order, 5, sx, sy, depth, S, 800, 600, 120, MAXO);
+        Set<Integer> sel = PointCloudView.selectVisibleThumbnails(order, 5, sx, sy, depth, S, 800, 600, 120, MAXO, 0);
         assertThat(sel).containsExactlyInAnyOrder(0, 3);
+    }
+
+    @Test
+    void maxCountCapsAcceptedToTheFrontMost() {
+        // Five well-separated cells (60px apart -> no overlap; all would be accepted uncapped).
+        // Depth ascending with index -> index 0 is front-most. Cap = 2 keeps the front two.
+        int[] order = {4, 3, 2, 1, 0}; // far-first
+        double[] sx = {0, 60, 120, 180, 240};
+        double[] sy = {0, 0, 0, 0, 0};
+        double[] depth = {0, 1, 2, 3, 4};
+        Set<Integer> capped =
+                PointCloudView.selectVisibleThumbnails(order, 5, sx, sy, depth, S, 800, 600, 120, MAXO, 2);
+        assertThat(capped).containsExactlyInAnyOrder(0, 1);
+        // Uncapped (0) keeps all five.
+        Set<Integer> uncapped =
+                PointCloudView.selectVisibleThumbnails(order, 5, sx, sy, depth, S, 800, 600, 120, MAXO, 0);
+        assertThat(uncapped).hasSize(5);
     }
 
     @Test
@@ -142,7 +159,7 @@ class PointCloudViewLodTest {
         double[] sx = {-500, 2000};
         double[] sy = {100, 100};
         double[] depth = {5.0, 5.0};
-        Set<Integer> sel = PointCloudView.selectVisibleThumbnails(order, 2, sx, sy, depth, S, 800, 600, 120, MAXO);
+        Set<Integer> sel = PointCloudView.selectVisibleThumbnails(order, 2, sx, sy, depth, S, 800, 600, 120, MAXO, 0);
         assertThat(sel).isEmpty();
     }
 

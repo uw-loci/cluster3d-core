@@ -84,10 +84,21 @@ public class PointCloudView extends Pane {
     private static final double MAX_THUMB_OVERLAP_FRAC = 0.10;
     // Ordered representative cells computed per class (medoid + farthest-point spread).
     private static final int MAX_REPRESENTATIVES = 5;
-    // Bounded LRU cache of decoded crop images. With viewport culling only the
-    // on-screen thumbnails need to stay cached, so this is small (each entry is a
-    // decoded ~64-128px image; 400 keeps decoded-crop heap well under ~100 MB).
-    private static final int IMAGE_CACHE_SIZE = 400;
+    // Hard cap on how many thumbnails are drawn (and thus loaded/cached) in one frame,
+    // regardless of how many the overlap test would admit. In a DENSE cluster at the zoom
+    // where thumbnails first activate (~14px footprint), the overlap bound alone can admit
+    // thousands -- far more than the decoded-image cache holds -- so the LRU thrashes:
+    // still-visible thumbnails get evicted, redrawn as points, re-enqueued, and reloaded,
+    // a self-sustaining loop that reads as constant flicker. Capping the FRONT-MOST N (the
+    // selector already processes nearest-first) below IMAGE_CACHE_SIZE keeps the visible
+    // working set resident, so nothing on screen is evicted while it is being drawn.
+    private static final int MAX_THUMBNAILS_DRAWN = 400;
+    // Bounded LRU cache of decoded crop images. With viewport culling + the draw cap only
+    // the on-screen thumbnails need to stay cached; sized comfortably ABOVE
+    // MAX_THUMBNAILS_DRAWN so the drawn set (all get()-touched each frame => most-recently
+    // used) is never the eviction victim -- eviction only ever drops off-screen / just-
+    // deselected crops. Each entry is a decoded crop image; 512 keeps heap well under ~100 MB.
+    private static final int IMAGE_CACHE_SIZE = 512;
     // Cap crop loads enqueued per frame so a fresh zoom-in does not submit a burst.
     private static final int MAX_LOADS_PER_FRAME = 128;
     // Global cap on concurrently in-flight crop loads: skip enqueue above this so the
@@ -499,9 +510,15 @@ public class PointCloudView extends Pane {
      * of side {@code s}: any accepted thumbnail that could overlap a candidate is within
      * {@code s} of its center, i.e. in the candidate's cell or its 8 neighbors.</p>
      *
+     * <p>Acceptance stops once {@code maxCount} thumbnails are chosen. Because processing is
+     * front-most-first, the cap keeps the NEAREST {@code maxCount} non-occluded thumbnails --
+     * a stable set that bounds how many crops are loaded/cached per frame, preventing the
+     * decoded-image LRU from thrashing (and the resulting flicker) in dense clusters.</p>
+     *
      * @param drawOrder visible cell indices, sorted BACK-to-front (far first); iterated in
      *                  REVERSE here so the front-most cell is processed first
      * @param count     number of valid entries in {@code drawOrder}
+     * @param maxCount  hard cap on accepted thumbnails ({@code <= 0} means no cap)
      * @return the set of selected (visible, non-occluded) cell indices to draw as thumbnails
      */
     static java.util.Set<Integer> selectVisibleThumbnails(
@@ -514,7 +531,8 @@ public class PointCloudView extends Pane {
             double w,
             double h,
             double margin,
-            double maxOverlapFrac) {
+            double maxOverlapFrac,
+            int maxCount) {
         double s = thumbSize > 0 ? thumbSize : 1.0;
         double area = s * s;
         java.util.Set<Integer> accepted = new java.util.HashSet<>();
@@ -523,6 +541,9 @@ public class PointCloudView extends Pane {
 
         // Nearest-first: drawOrder is far-to-near, so iterate in reverse.
         for (int k = count - 1; k >= 0; k--) {
+            if (maxCount > 0 && accepted.size() >= maxCount) {
+                break; // front-most maxCount already chosen
+            }
             int i = drawOrder[k];
             double cxp = projX[i];
             double cyp = projY[i];
@@ -657,7 +678,8 @@ public class PointCloudView extends Pane {
                     w,
                     h,
                     ON_SCREEN_MARGIN_PX,
-                    MAX_THUMB_OVERLAP_FRAC);
+                    MAX_THUMB_OVERLAP_FRAC,
+                    MAX_THUMBNAILS_DRAWN);
         } else {
             thumbSelected = java.util.Collections.emptySet();
         }
