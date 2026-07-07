@@ -16,7 +16,7 @@ plugins {
 qupathExtension {
     name = "cluster3d-core"
     group = "io.github.uw-loci"
-    version = "0.1.4"
+    version = "0.1.5"
     description = "Apache-2.0 shared 3D point-cloud viewer core for Cluster 3D Navigator and host plugins."
     automaticModule = "io.github.uw.loci.cluster3d.core"
 }
@@ -67,7 +67,7 @@ publishing {
         create<MavenPublication>("maven") {
             groupId = "io.github.uw-loci"
             artifactId = "cluster3d-core"
-            version = "0.1.4"
+            version = "0.1.5"
             from(components["java"])
         }
     }

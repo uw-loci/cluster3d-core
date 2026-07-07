@@ -21,6 +21,7 @@ import javafx.beans.property.StringProperty;
 import javafx.beans.value.ChangeListener;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -30,6 +31,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TitledPane;
@@ -325,8 +327,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
         changeAxes.setTooltip(new Tooltip("Pick which numeric measurements map to the axes."));
         changeAxes.setOnAction(e -> openAxisPicker());
 
-        // Quick toggle: moved out of the collapsed Display options so it is one click away,
-        // right after Change axes... (setShowCellImages also pre-warms the representatives).
+        // Quick toggle in the top strip (grouped with the cell-limit / seed / points controls;
+        // setShowCellImages also pre-warms the representatives).
         CheckBox cellImages = new CheckBox("Show cell images");
         cellImages.setSelected(Cluster3DNavPreferences.showCellImagesProperty().get());
         cellImages.setTooltip(
@@ -338,17 +340,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
         cloudView.setShowCellImages(cellImages.isSelected());
 
         HBox axisRow = new HBox(
-                8,
-                new Label("Axes:"),
-                new Label("X"),
-                axisX,
-                new Label("Y"),
-                axisY,
-                zLabel,
-                axisZ,
-                autoTag,
-                changeAxes,
-                cellImages);
+                8, new Label("Axes:"), new Label("X"), axisX, new Label("Y"), axisY, zLabel, axisZ, autoTag,
+                changeAxes);
         axisRow.setAlignment(Pos.CENTER_LEFT);
 
         HBox pointsReset = new HBox(8, pointsLabel, reset);
@@ -363,7 +356,19 @@ public class Cluster3DNavigatorPane extends BorderPane {
         // A FlowPane so the control GROUPS wrap to a new line at narrow widths instead of
         // clipping off the right edge -- each HBox group stays intact and wraps as a unit,
         // so the Cell limit / Seed / "?" controls are always reachable at the min 820 width.
-        FlowPane controls = new FlowPane(12, 6, modeControls, dimControls, axisRow, limitRow, pointsReset);
+        // Vertical separators divide the three logical groups: scope | view+axes |
+        // display+limit+points. (On a wrap, a separator may land at a line edge -- cosmetic.)
+        FlowPane controls = new FlowPane(
+                12,
+                6,
+                modeControls,
+                verticalSeparator(),
+                dimControls,
+                axisRow,
+                verticalSeparator(),
+                cellImages,
+                limitRow,
+                pointsReset);
         controls.setAlignment(Pos.CENTER_LEFT);
         controls.setPadding(new Insets(6));
 
@@ -478,6 +483,23 @@ public class Cluster3DNavigatorPane extends BorderPane {
         });
         cloudView.setShowTripod(tripod.isSelected());
 
+        // Draw each cell's segmentation outline (its detection ROI) on the crop, in the cell's
+        // class color -- in both the in-cloud thumbnails and the Cell preview. Baked into the
+        // crop by CellCropService, so toggling clears the crop caches and re-renders.
+        CheckBox outlines = new CheckBox("Show detection outlines");
+        outlines.setSelected(Cluster3DNavPreferences.showDetectionOutlinesProperty().get());
+        outlines.setTooltip(new Tooltip("Draw each cell's segmentation boundary on its crop image "
+                + "(thumbnails + Cell preview). Helps spot clusters caused by segmentation errors."));
+        outlines.selectedProperty().addListener((o, a, b) -> {
+            Cluster3DNavPreferences.showDetectionOutlinesProperty().set(b);
+            cropService.setShowOutlines(b);
+            cloudView.clearImageCache(); // in-cloud thumbnails re-bake
+            if (lastPreviewIndex >= 0) {
+                loadPreview(lastPreviewIndex); // re-render the current preview crop
+            }
+        });
+        cropService.setShowOutlines(outlines.isSelected());
+
         Spinner<Integer> repsPerCluster = intSpinner(
                 0,
                 5,
@@ -528,6 +550,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
                 depthCue,
                 hoverPreview,
                 tripod,
+                outlines,
                 labeledRow("Representative cells per cluster", repsPerCluster));
         content.setPadding(new Insets(6));
         TitledPane pane = new TitledPane("Display options", content);
@@ -540,6 +563,13 @@ public class Cluster3DNavigatorPane extends BorderPane {
         HBox row = new HBox(8, new Label(label), control);
         row.setAlignment(Pos.CENTER_LEFT);
         return row;
+    }
+
+    /** A short vertical divider between control groups in the top strip. */
+    private static Separator verticalSeparator() {
+        Separator s = new Separator(Orientation.VERTICAL);
+        s.setPrefHeight(24);
+        return s;
     }
 
     /** Parse a "#RRGGBB" web color; falls back to the light-theme default on empty/invalid. */

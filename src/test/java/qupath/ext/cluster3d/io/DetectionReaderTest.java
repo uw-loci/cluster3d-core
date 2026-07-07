@@ -15,6 +15,9 @@ package qupath.ext.cluster3d.io;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
+import java.awt.Shape;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.PathIterator;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -145,6 +148,35 @@ class DetectionReaderTest {
         }
         assertThat(d.xName).isEqualTo("X");
         assertThat(d.zName).isEqualTo("");
+    }
+
+    // --- outline flattening ---
+
+    @Test
+    void flattenOutlineRemovesCurvesAndPreservesBounds() {
+        // An ellipse's shape uses cubic segments; flattening must yield only line segments.
+        Shape flat = DetectionReader.flattenOutline(new Ellipse2D.Double(10, 20, 40, 30));
+        assertThat(flat).isNotNull();
+        double[] coords = new double[6];
+        int segs = 0;
+        boolean sawCurve = false;
+        for (PathIterator it = flat.getPathIterator(null); !it.isDone(); it.next()) {
+            int type = it.currentSegment(coords);
+            if (type == PathIterator.SEG_CUBICTO || type == PathIterator.SEG_QUADTO) {
+                sawCurve = true;
+            }
+            segs++;
+        }
+        assertThat(sawCurve).isFalse();
+        assertThat(segs).isGreaterThan(3); // flattened into several line segments
+        // Bounds are preserved (within the flattening tolerance).
+        assertThat(flat.getBounds2D().getMinX()).isCloseTo(10, within(1.0));
+        assertThat(flat.getBounds2D().getMinY()).isCloseTo(20, within(1.0));
+    }
+
+    @Test
+    void flattenOutlineNullIsNull() {
+        assertThat(DetectionReader.flattenOutline(null)).isNull();
     }
 
     // --- farthest-point sampling ---

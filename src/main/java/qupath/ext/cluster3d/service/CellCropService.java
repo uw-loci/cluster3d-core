@@ -15,6 +15,12 @@
 
 package qupath.ext.cluster3d.service;
 
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.Shape;
+import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -23,6 +29,7 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.cluster3d.model.CellRef;
+import qupath.lib.common.ColorTools;
 import qupath.lib.display.ChannelDisplayInfo;
 import qupath.lib.display.ImageDisplay;
 import qupath.lib.gui.QuPathGUI;
@@ -62,8 +69,16 @@ public class CellCropService implements AutoCloseable {
     private static final int TARGET_OUTPUT_PX = 224;
     /** Max number of self-built ImageServers kept open at once (bounded LRU). */
     private static final int MAX_OPEN_SERVERS = 8;
+    /** Outline stroke width (px in the crop's output space; fixed so it does not shrink with cell size). */
+    private static final float OUTLINE_STROKE_PX = 2.0f;
+    /** Fallback outline color (mid gray) for cells with no class color. */
+    private static final Color OUTLINE_FALLBACK = new Color(150, 150, 150);
 
     private final QuPathGUI qupath;
+    // Whether to draw each cell's segmentation outline onto its crop. Written on the FX
+    // thread, read on loader threads -> volatile. Stale in-flight crops baked with the old
+    // value are discarded by PointCloudView's imageCacheGen bump on clearImageCache().
+    private volatile boolean showOutlines = false;
     // Bounded LRU of servers we built ourselves (NOT the open viewer's server). Kept
     // small so a many-image cloud does not hold one open (tile-caching) server per image
     // for the whole session; the least-recently-used server is closed on eviction. This
@@ -105,7 +120,8 @@ public class CellCropService implements AutoCloseable {
         try {
             RegionRequest request =
                     RegionRequest.createInstance(server.getPath(), w.downsample, w.x, w.y, w.side, w.side);
-            return applyDisplay(ref, server, server.readRegion(request));
+            BufferedImage out = applyDisplay(ref, server, server.readRegion(request));
+            return bakeOutline(out, ref, w);
         } catch (Exception e) {
             logger.warn(
                     "Crop read failed at ({}, {}) side={} ds={}: {}", w.x, w.y, w.side, w.downsample, e.getMessage());
@@ -149,6 +165,73 @@ public class CellCropService implements AutoCloseable {
     /** Convenience overload using {@link #DEFAULT_CROP_SCALE}. */
     public BufferedImage readCrop(CellRef ref) {
         return readCrop(ref, DEFAULT_CROP_SCALE);
+    }
+
+    /**
+     * Enable/disable drawing each cell's segmentation outline onto its crop. Callers must
+     * invalidate any cached crops (e.g. {@code PointCloudView.clearImageCache()} + reload the
+     * preview) so already-cached crops re-bake with the new setting.
+     */
+    public void setShowOutlines(boolean showOutlines) {
+        this.showOutlines = showOutlines;
+    }
+
+    /**
+     * Map a full-resolution ROI shape into crop-pixel space (PURE, unit-testable). Mirrors
+     * {@link #computeCropWindow}: crop-pixel = {@code (fullPx - x0) / downsample}. Applied as
+     * {@code scale(1/d)} then {@code translate(-x0, -y0)} so a point is translated by the crop
+     * origin first, then scaled by {@code 1/d}.
+     */
+    static Shape outlineToCropSpace(Shape fullRes, int x0, int y0, double downsample) {
+        if (fullRes == null) {
+            return null;
+        }
+        double d = downsample <= 0 ? 1.0 : downsample;
+        AffineTransform t = new AffineTransform();
+        t.scale(1.0 / d, 1.0 / d);
+        t.translate(-x0, -y0);
+        return t.createTransformedShape(fullRes);
+    }
+
+    /**
+     * Draw the cell's precomputed segmentation outline onto its crop, in the cell's class
+     * color (fallback gray). No-op when the feature is off or no outline was captured.
+     * Best-effort: any failure returns the un-annotated crop (an outline must never break a
+     * crop). The outline shape is transformed into crop space and stroked at a FIXED width --
+     * the transform is NOT set on the Graphics2D (that would scale the stroke to 2/d px and
+     * make it vanish on large cells).
+     */
+    private BufferedImage bakeOutline(BufferedImage img, CellRef ref, CropWindow w) {
+        if (img == null || !showOutlines || ref == null || ref.getRoiOutline() == null) {
+            return img;
+        }
+        try {
+            Shape cropSpace = outlineToCropSpace(ref.getRoiOutline(), w.x, w.y, w.downsample);
+            if (cropSpace == null) {
+                return img;
+            }
+            Graphics2D g = img.createGraphics();
+            try {
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setStroke(new BasicStroke(OUTLINE_STROKE_PX, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g.setColor(outlineColor(ref.getRoiColorRgb()));
+                g.draw(cropSpace);
+            } finally {
+                g.dispose();
+            }
+            return img;
+        } catch (Exception e) {
+            logger.debug("Outline overlay failed; using plain crop: {}", e.getMessage());
+            return img;
+        }
+    }
+
+    /** AWT color from a packed RGB int (0 -> fallback gray). */
+    private static Color outlineColor(int rgb) {
+        if (rgb == 0) {
+            return OUTLINE_FALLBACK;
+        }
+        return new Color(ColorTools.red(rgb), ColorTools.green(rgb), ColorTools.blue(rgb));
     }
 
     /**

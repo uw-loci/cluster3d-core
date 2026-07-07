@@ -13,7 +13,10 @@
 package qupath.ext.cluster3d.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
+import java.awt.Shape;
+import java.awt.geom.Rectangle2D;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -82,6 +85,45 @@ class CellCropServiceTest {
         assertThat(CellCropService.canApplyViewerDisplay(1, 1)).isTrue();
         assertThat(CellCropService.canApplyViewerDisplay(3, 4)).isFalse();
         assertThat(CellCropService.canApplyViewerDisplay(4, 3)).isFalse();
+    }
+
+    // --- outline -> crop-space transform (full-res px -> crop px = (p - origin)/downsample) ---
+
+    @Test
+    void outlineToCropSpaceIdentityLeavesBoundsUnchanged() {
+        Shape s = new Rectangle2D.Double(100, 100, 10, 10);
+        Rectangle2D b = CellCropService.outlineToCropSpace(s, 0, 0, 1.0).getBounds2D();
+        assertThat(b.getMinX()).isCloseTo(100, within(1e-9));
+        assertThat(b.getMinY()).isCloseTo(100, within(1e-9));
+        assertThat(b.getWidth()).isCloseTo(10, within(1e-9));
+        assertThat(b.getHeight()).isCloseTo(10, within(1e-9));
+    }
+
+    @Test
+    void outlineToCropSpaceTranslatesByCropOrigin() {
+        // Full-res rect (100,100)-(110,110), crop origin (90,90), d=1 -> (10,10)-(20,20).
+        Shape s = new Rectangle2D.Double(100, 100, 10, 10);
+        Rectangle2D b = CellCropService.outlineToCropSpace(s, 90, 90, 1.0).getBounds2D();
+        assertThat(b.getMinX()).isCloseTo(10, within(1e-9));
+        assertThat(b.getMinY()).isCloseTo(10, within(1e-9));
+        assertThat(b.getMaxX()).isCloseTo(20, within(1e-9));
+        assertThat(b.getMaxY()).isCloseTo(20, within(1e-9));
+    }
+
+    @Test
+    void outlineToCropSpaceTranslatesThenScales() {
+        // Same rect, origin (90,90), d=2 -> translate first ((10,10)-(20,20)) then /2 -> (5,5)-(10,10).
+        Shape s = new Rectangle2D.Double(100, 100, 10, 10);
+        Rectangle2D b = CellCropService.outlineToCropSpace(s, 90, 90, 2.0).getBounds2D();
+        assertThat(b.getMinX()).isCloseTo(5, within(1e-9));
+        assertThat(b.getMinY()).isCloseTo(5, within(1e-9));
+        assertThat(b.getMaxX()).isCloseTo(10, within(1e-9));
+        assertThat(b.getMaxY()).isCloseTo(10, within(1e-9));
+    }
+
+    @Test
+    void outlineToCropSpaceNullIsNull() {
+        assertThat(CellCropService.outlineToCropSpace(null, 0, 0, 1.0)).isNull();
     }
 
     @Test

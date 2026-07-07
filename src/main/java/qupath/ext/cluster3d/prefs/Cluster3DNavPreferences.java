@@ -46,6 +46,7 @@ public final class Cluster3DNavPreferences {
     public static final boolean DEFAULT_SHOW_TRIPOD = true;
     public static final boolean DEFAULT_HOVER_PREVIEW = false;
     public static final boolean DEFAULT_SHOW_CELL_IMAGES = false;
+    public static final boolean DEFAULT_SHOW_DETECTION_OUTLINES = false;
     public static final int DEFAULT_REPRESENTATIVES_PER_CLUSTER = 3;
     public static final int DEFAULT_CELL_LIMIT_PER_IMAGE = 0; // 0 = no limit
     public static final int DEFAULT_SUBSAMPLE_SEED = 42;
@@ -64,6 +65,7 @@ public final class Cluster3DNavPreferences {
     private static BooleanProperty showTripod;
     private static BooleanProperty hoverPreview;
     private static BooleanProperty showCellImages;
+    private static BooleanProperty showDetectionOutlines;
     private static IntegerProperty representativesPerCluster;
     private static IntegerProperty cellLimitPerImage;
     private static IntegerProperty subsampleSeed;
@@ -91,6 +93,8 @@ public final class Cluster3DNavPreferences {
         showTripod = PathPrefs.createPersistentPreference(PREFIX + "showTripod", DEFAULT_SHOW_TRIPOD);
         hoverPreview = PathPrefs.createPersistentPreference(PREFIX + "hoverPreview", DEFAULT_HOVER_PREVIEW);
         showCellImages = PathPrefs.createPersistentPreference(PREFIX + "showCellImages", DEFAULT_SHOW_CELL_IMAGES);
+        showDetectionOutlines = PathPrefs.createPersistentPreference(
+                PREFIX + "showDetectionOutlines", DEFAULT_SHOW_DETECTION_OUTLINES);
         representativesPerCluster = PathPrefs.createPersistentPreference(
                 PREFIX + "representativesPerCluster", DEFAULT_REPRESENTATIVES_PER_CLUSTER);
         cellLimitPerImage =
@@ -188,6 +192,12 @@ public final class Cluster3DNavPreferences {
     public static BooleanProperty showCellImagesProperty() {
         ensureInstalled();
         return showCellImages;
+    }
+
+    /** Whether to draw each cell's segmentation outline on its crop (thumbnails + preview). */
+    public static BooleanProperty showDetectionOutlinesProperty() {
+        ensureInstalled();
+        return showDetectionOutlines;
     }
 
     // === Per-project last-axis names. Persisted under a project-scoped key so

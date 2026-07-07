@@ -12,6 +12,9 @@
 
 package qupath.ext.cluster3d.io;
 
+import java.awt.Shape;
+import java.awt.geom.Path2D;
+import java.awt.geom.PathIterator;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -56,6 +59,9 @@ public final class DetectionReader {
     // Percentile band used for outlier-robust range estimation.
     private static final double PCT_LOW = 2.0;
     private static final double PCT_HIGH = 98.0;
+    // Curve-flattening tolerance (px) for the stored segmentation outline: bounds the
+    // vertex count and drops curve segments so each stored outline is small + predictable.
+    private static final double OUTLINE_FLATNESS = 0.5;
 
     private DetectionReader() {}
 
@@ -241,9 +247,15 @@ public final class DetectionReader {
                 m.put(name, v == null ? Double.NaN : v.doubleValue());
             }
             double half = 0.5 * Math.max(roi.getBoundsWidth(), roi.getBoundsHeight());
-            CellRef ref = new CellRef(imageId, imageName, roi.getCentroidX(), roi.getCentroidY(), half);
             PathClass pc = det.getPathClass();
             PathClass key = (pc == PathClass.getNullClass()) ? null : pc;
+            // Precompute the segmentation outline (flattened, full-res px) + packed class color
+            // once here on the single read thread -- so the crop service can draw it later
+            // without retaining the live ROI or calling its non-thread-safe getShape().
+            Shape outline = captureOutline(roi);
+            int rgb = (pc != null && pc != PathClass.getNullClass() && pc.getColor() != null) ? pc.getColor() : 0;
+            CellRef ref =
+                    new CellRef(imageId, imageName, roi.getCentroidX(), roi.getCentroidY(), half, outline, rgb);
             recs.add(new CellRecord(ref, pc, m));
             maps.add(m);
             xs.add(roi.getCentroidX());
@@ -364,6 +376,37 @@ public final class DetectionReader {
                 yName,
                 twoD ? "" : zName,
                 omitted);
+    }
+
+    /**
+     * Capture a detection's segmentation outline as a compact, flattened {@link Shape} in
+     * full-resolution pixel coordinates, or {@code null} if unavailable. Best-effort: point
+     * ROIs have no drawable shape ({@code getShape()} throws) and any other failure is
+     * swallowed -- a missing outline must never break the read.
+     */
+    private static Shape captureOutline(ROI roi) {
+        if (roi == null || roi.isPoint()) {
+            return null;
+        }
+        try {
+            return flattenOutline(roi.getShape());
+        } catch (Exception | LinkageError e) {
+            return null;
+        }
+    }
+
+    /**
+     * Flatten a shape (removing curve segments) into a {@link Path2D.Float} using
+     * {@link #OUTLINE_FLATNESS}. Package-private + pure for unit testing. Returns null for a
+     * null input.
+     */
+    static Shape flattenOutline(Shape shape) {
+        if (shape == null) {
+            return null;
+        }
+        Path2D.Float out = new Path2D.Float();
+        out.append(shape.getPathIterator(null, OUTLINE_FLATNESS), false);
+        return out;
     }
 
     private static boolean finite(Double v) {
