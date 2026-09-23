@@ -51,6 +51,7 @@ import javafx.stage.Window;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.cluster3d.io.AxisAutoDetect;
+import qupath.ext.cluster3d.io.AxisChoice;
 import qupath.ext.cluster3d.io.DetectionReader;
 import qupath.ext.cluster3d.model.CellRef;
 import qupath.ext.cluster3d.model.PointCloudData;
@@ -124,6 +125,9 @@ public class Cluster3DNavigatorPane extends BorderPane {
     // Read state. Per-cell measurement maps are NOT retained for the session.
     private List<String> numericAxes = List.of();
     private String[] requestedAxes; // explicit user axis choice honored across a re-read
+    // Axes the host says this view is for (e.g. the embedding a clustering run just wrote).
+    // Outranks the remembered per-project pick -- see AxisChoice.choose.
+    private String[] hostPreferredAxes;
     private PointCloudData data;
     private int lastPreviewIndex = -1; // last cell shown in the Cell preview panel
     private boolean suppressAxisEvents = false;
@@ -195,6 +199,23 @@ public class Cluster3DNavigatorPane extends BorderPane {
      * @param entries the fixed image scope (may be null/empty -> current image only)
      */
     public void initializeForHost(List<ProjectImageEntry<BufferedImage>> entries) {
+        initializeForHost(entries, null);
+    }
+
+    /**
+     * As {@link #initializeForHost(List)}, but also names the embedding this view is for.
+     * <p>
+     * Without this the pane can only guess from measurement names, and a custom embedding
+     * name it does not recognise falls through to the first few measurements -- a cloud of
+     * morphology columns that looks broken. A host that just computed an embedding knows
+     * those column names exactly, so it should say.
+     *
+     * @param entries       the selected project-image entries (may be null/empty)
+     * @param preferredAxes embedding column names, or null to auto-detect as before
+     */
+    public void initializeForHost(
+            List<ProjectImageEntry<BufferedImage>> entries, String[] preferredAxes) {
+        this.hostPreferredAxes = (preferredAxes == null) ? null : preferredAxes.clone();
         this.hostMode = true;
         this.selectedEntries = (entries == null) ? null : new java.util.ArrayList<>(entries);
         // The host fixes the scope, so the mode radios + Select images button are
@@ -835,7 +856,10 @@ public class Cluster3DNavigatorPane extends BorderPane {
                     try {
                         if (pm) {
                             result = DetectionReader.readEntries(
-                                    selEntries, msg -> Platform.runLater(() -> busyLabel.setText(msg)), opts);
+                                    selEntries,
+                                    msg -> Platform.runLater(() -> busyLabel.setText(msg)),
+                                    opts,
+                                    imgData);
                         } else {
                             result = DetectionReader.readImage(imgData, fImageId, fImageName, opts);
                         }
@@ -948,7 +972,10 @@ public class Cluster3DNavigatorPane extends BorderPane {
         cloudView.setData(data);
         legend.setData(data);
         cloudView.setVisibleMask(legend.getVisibleMask());
-        Cluster3DNavPreferences.setLastAxes(projectKey(), x, y, z == null ? "" : z);
+        // NOT remembered here. This runs for every render, including an auto-detected or
+        // fallback pick, so saving here recorded guesses as though the user had chosen
+        // them -- and a remembered guess then outranked auto-detection on the next open.
+        // Only the axis dialog remembers, and only when the user ticks it.
         updateTwoOfThreeWarning(x, y);
         updatePointsLabel();
         updateNotes();
@@ -967,42 +994,43 @@ public class Cluster3DNavigatorPane extends BorderPane {
     }
 
     private String[] chooseAxes(List<String> numeric) {
-        if (isValid(requestedAxes, numeric)) {
-            autoTag.setText("");
-            return requestedAxes;
+        return applyChoice(
+                AxisChoice.choose(
+                        3,
+                        requestedAxes,
+                        hostPreferredAxes,
+                        Cluster3DNavPreferences.getLastAxes(projectKey()),
+                        AxisAutoDetect.detect(numeric),
+                        numeric),
+                numeric,
+                3);
+    }
+
+    /** Tag the axis row with where the choice came from, and return the axes. */
+    private String[] applyChoice(AxisChoice.Result choice, List<String> numeric, int n) {
+        switch (choice.source()) {
+            case AUTO_DETECTED -> autoTag.setText("(auto-detected: "
+                    + (n == 3 ? AxisAutoDetect.detectedFamily(numeric) : AxisAutoDetect.detectedFamilyPair(numeric))
+                    + ")");
+            case HOST -> autoTag.setText("(this result's embedding)");
+            case FALLBACK -> autoTag.setText("(no embedding detected -- pick " + n + " axes)");
+            default -> autoTag.setText("");
         }
-        String[] remembered = Cluster3DNavPreferences.getLastAxes(projectKey());
-        if (isValid(remembered, numeric)) {
-            autoTag.setText("");
-            return remembered;
-        }
-        List<String> triple = AxisAutoDetect.detect(numeric);
-        if (triple.size() == 3) {
-            autoTag.setText("(auto-detected: " + AxisAutoDetect.detectedFamily(numeric) + ")");
-            return triple.toArray(new String[0]);
-        }
-        autoTag.setText("(no embedding detected -- pick 3 axes)");
-        return new String[] {numeric.get(0), numeric.get(1), numeric.get(2)};
+        return choice.axes();
     }
 
     /** Choose the 2 axes for a flat 2D view: explicit request, else remembered, else auto-detect. */
     private String[] chooseAxes2D(List<String> numeric) {
-        if (isValid2D(requestedAxes, numeric)) {
-            autoTag.setText("");
-            return new String[] {requestedAxes[0], requestedAxes[1]};
-        }
-        String[] remembered = Cluster3DNavPreferences.getLastAxes(projectKey());
-        if (isValid2D(remembered, numeric)) {
-            autoTag.setText("");
-            return new String[] {remembered[0], remembered[1]};
-        }
-        List<String> pair = AxisAutoDetect.detectPair(numeric);
-        if (pair.size() == 2) {
-            autoTag.setText("(auto-detected: " + AxisAutoDetect.detectedFamilyPair(numeric) + ")");
-            return pair.toArray(new String[0]);
-        }
-        autoTag.setText("(no 2D embedding detected -- pick 2 axes)");
-        return new String[] {numeric.get(0), numeric.get(1)};
+        return applyChoice(
+                AxisChoice.choose(
+                        2,
+                        requestedAxes,
+                        hostPreferredAxes,
+                        Cluster3DNavPreferences.getLastAxes(projectKey()),
+                        AxisAutoDetect.detectPair(numeric),
+                        numeric),
+                numeric,
+                2);
     }
 
     private static boolean isValid(String[] axes, List<String> numeric) {

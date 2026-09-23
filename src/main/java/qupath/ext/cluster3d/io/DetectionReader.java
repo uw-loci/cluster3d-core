@@ -20,6 +20,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.TreeSet;
 import java.util.function.Consumer;
 import javafx.scene.paint.Color;
@@ -108,6 +114,9 @@ public final class DetectionReader {
      * {@link #minPerCluster} farthest-point representatives, the rest of the budget is
      * filled at random using {@link #seed} (deterministic).
      */
+    /** Upper bound on concurrent image reads; each holds a decoded image and tile cache. */
+    private static final int MAX_READ_THREADS = 4;
+
     public static final class ReadOptions {
         public final int cellLimit;
         public final int minPerCluster;
@@ -192,28 +201,114 @@ public final class DetectionReader {
      */
     public static ReadResult readEntries(
             List<ProjectImageEntry<BufferedImage>> entries, Consumer<String> progress, ReadOptions opts) {
+        return readEntries(entries, progress, opts, null);
+    }
+
+    /**
+     * As {@link #readEntries(List, Consumer, ReadOptions)}, but never closes {@code keepOpen}.
+     * <p>
+     * Each entry is read on its own detached {@link ImageData}, whose server holds a native
+     * reader and tile cache, so every one must be closed or the read leaks a file handle and
+     * heap per image for the session. The live GUI ImageData must NOT be closed -- pass it
+     * here so it is skipped if an entry hands back that same instance.
+     * <p>
+     * Images are read concurrently (bounded), since the cost is dominated by opening each
+     * image rather than by CPU. Results are merged in the caller's entry order so the cloud
+     * does not depend on which read finished first.
+     *
+     * @param entries  the selected project-image entries (may be null/empty)
+     * @param progress optional callback "image k of N" (may be null; called off the FX thread)
+     * @param opts     per-image cell-limit options
+     * @param keepOpen the live ImageData to leave open, or null
+     */
+    public static ReadResult readEntries(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            Consumer<String> progress,
+            ReadOptions opts,
+            ImageData<BufferedImage> keepOpen) {
         List<CellRecord> records = new ArrayList<>();
         List<Map<String, Double>> maps = new ArrayList<>();
-        boolean error = false;
-        boolean limited = false;
-        if (entries != null) {
-            int n = entries.size();
-            int k = 0;
-            for (ProjectImageEntry<BufferedImage> entry : entries) {
-                k++;
-                if (progress != null) {
-                    progress.accept("Reading image " + k + " of " + n + "...");
-                }
+        if (entries == null || entries.isEmpty()) {
+            return new ReadResult(records, numericMeasurementUnion(maps), false, false);
+        }
+        int n = entries.size();
+        int threads = Math.max(1, Math.min(MAX_READ_THREADS, Math.min(n, Runtime.getRuntime()
+                .availableProcessors() - 1)));
+        // Per-entry slots keep the merge order deterministic regardless of completion order.
+        List<List<CellRecord>> recordSlots = new ArrayList<>(n);
+        List<List<Map<String, Double>>> mapSlots = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            recordSlots.add(new ArrayList<>());
+            mapSlots.add(new ArrayList<>());
+        }
+        AtomicBoolean error = new AtomicBoolean(false);
+        AtomicBoolean limited = new AtomicBoolean(false);
+        AtomicInteger done = new AtomicInteger();
+        ExecutorService pool = Executors.newFixedThreadPool(threads, r -> {
+            Thread t = new Thread(r, "cluster3d-read-worker");
+            t.setDaemon(true);
+            return t;
+        });
+        try {
+            List<Future<?>> futures = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) {
+                final int slot = i;
+                final ProjectImageEntry<BufferedImage> entry = entries.get(i);
+                futures.add(pool.submit(() -> {
+                    ImageData<BufferedImage> data = null;
+                    try {
+                        data = entry.readImageData();
+                        if (collectImage(
+                                data,
+                                entry.getID(),
+                                entry.getImageName(),
+                                opts,
+                                recordSlots.get(slot),
+                                mapSlots.get(slot))) {
+                            limited.set(true);
+                        }
+                    } catch (Exception e) {
+                        logger.error("Could not read image data for '{}'", entry.getImageName(), e);
+                        error.set(true);
+                    } finally {
+                        if (data != null && data != keepOpen) {
+                            closeQuietly(data);
+                        }
+                        if (progress != null) {
+                            progress.accept("Read image " + done.incrementAndGet() + " of " + n + "...");
+                        }
+                    }
+                }));
+            }
+            for (Future<?> f : futures) {
                 try {
-                    ImageData<BufferedImage> data = entry.readImageData();
-                    limited |= collectImage(data, entry.getID(), entry.getImageName(), opts, records, maps);
-                } catch (Exception e) {
-                    logger.error("Could not read image data for '{}'", entry.getImageName(), e);
-                    error = true;
+                    f.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    error.set(true);
+                    break;
+                } catch (ExecutionException e) {
+                    logger.error("Detection read task failed", e.getCause());
+                    error.set(true);
                 }
             }
+        } finally {
+            pool.shutdownNow();
         }
-        return new ReadResult(records, numericMeasurementUnion(maps), error, limited);
+        for (int i = 0; i < n; i++) {
+            records.addAll(recordSlots.get(i));
+            maps.addAll(mapSlots.get(i));
+        }
+        return new ReadResult(records, numericMeasurementUnion(maps), error.get(), limited.get());
+    }
+
+    /** Close the reader behind {@code data}, logging and swallowing any failure. */
+    private static void closeQuietly(ImageData<BufferedImage> data) {
+        try {
+            data.getServer().close();
+        } catch (Exception e) {
+            logger.warn("Failed to close image reader: {}", e.getMessage());
+        }
     }
 
     /**
