@@ -57,12 +57,43 @@ class Camera3DTest {
     }
 
     @Test
-    void pitchIsClamped() {
+    void pitchWrapsInsteadOfStoppingAtThePoles() {
         Camera3D cam = new Camera3D();
         cam.setPitch(200);
-        assertThat(cam.getPitch()).isEqualTo(Camera3D.PITCH_LIMIT);
+        assertThat(cam.getPitch()).isEqualTo(-160.0);
         cam.setPitch(-200);
-        assertThat(cam.getPitch()).isEqualTo(-Camera3D.PITCH_LIMIT);
+        assertThat(cam.getPitch()).isEqualTo(160.0);
+        cam.setPitch(180);
+        assertThat(cam.getPitch()).isEqualTo(180.0);
+    }
+
+    /** Dragging a full turn used to stop dead just short of 90 degrees. */
+    @Test
+    void draggingAFullTurnComesBackToTheStartingView() {
+        Camera3D cam = new Camera3D();
+        cam.setPitch(0);
+        for (int i = 0; i < 36; i++) {
+            cam.rotate(0, 10);
+        }
+        assertThat(cam.getPitch()).isCloseTo(0.0, within(1e-9));
+    }
+
+    /** Upside down is a real view, not a degenerate one: Y mirrors, X is untouched. */
+    @Test
+    void pitchPastTheVerticalRendersUpsideDown() {
+        Camera3D cam = new Camera3D();
+        cam.setViewport(200, 200);
+        float[] pts = {-1, 1};
+        cam.fitAll(pts, pts, pts);
+        cam.setYaw(0);
+        cam.setPitch(0);
+        double[] center = cam.project(0, 0, 0);
+        double[] upright = cam.project(0, 0.5, 0);
+        cam.setPitch(180);
+        double[] flipped = cam.project(0, 0.5, 0);
+        assertThat(upright[1]).isLessThan(center[1]);
+        assertThat(flipped[1]).isGreaterThan(center[1]);
+        assertThat(flipped[0]).isCloseTo(upright[0], within(1e-6));
     }
 
     @Test

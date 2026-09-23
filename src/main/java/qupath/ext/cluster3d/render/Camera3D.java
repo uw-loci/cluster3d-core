@@ -33,8 +33,7 @@ public final class Camera3D {
     public static final double DEFAULT_YAW = 30.0;
     /** Default pitch (degrees) for the fit-all isometric-ish tilt. */
     public static final double DEFAULT_PITCH = -20.0;
-    /** Pitch is clamped to +/- this many degrees to avoid gimbal flip. */
-    public static final double PITCH_LIMIT = 89.0;
+    /** Pitch wraps rather than clamping, so rotation is continuous through the poles. */
     /** Fraction of the smaller viewport dimension the fit-all cloud spans. */
     private static final double FIT_MARGIN = 0.85;
 
@@ -171,7 +170,7 @@ public final class Camera3D {
         return new double[] {screenX, screenY, z2};
     }
 
-    /** Rotate the camera by screen-drag deltas (degrees), clamping pitch. No-op in 2D mode. */
+    /** Rotate the camera by screen-drag deltas (degrees); both axes wrap. No-op in 2D mode. */
     public void rotate(double deltaYawDeg, double deltaPitchDeg) {
         if (mode2D) {
             return;
@@ -214,7 +213,26 @@ public final class Camera3D {
     }
 
     public void setPitch(double pitchDeg) {
-        this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitchDeg));
+        this.pitch = wrapDegrees(pitchDeg);
+    }
+
+    /**
+     * Wrap an angle into (-180, 180].
+     * <p>
+     * Pitch used to clamp just short of the poles, which stopped a drag partway and made
+     * the cloud feel stuck. The projection here is a plain rotation matrix and stays
+     * continuous at any angle -- past 90 degrees the cloud simply renders upside down --
+     * so wrapping lets a drag carry all the way round to where it started.
+     */
+    private static double wrapDegrees(double deg) {
+        double d = deg % 360.0;
+        if (d > 180.0) {
+            d -= 360.0;
+        }
+        if (d <= -180.0) {
+            d += 360.0;
+        }
+        return d;
     }
 
     public void setYaw(double yawDeg) {
