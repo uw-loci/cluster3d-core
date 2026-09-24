@@ -123,4 +123,19 @@ class AxisAutoDetectTest {
         List<String> names = List.of("UMAP1", "UMAP2", "UMAP3", "PCA1", "PCA2", "PCA3");
         assertThat(AxisAutoDetect.isTwoOfThree(names, "UMAP1", "PCA2")).isFalse();
     }
+
+    /** QP-CAT marks its own columns "QPCAT UMAP1" so they can be told from user data. */
+    @Test
+    void aToolPrefixDoesNotHideTheFamily() {
+        List<String> r = AxisAutoDetect.detect(
+                List.of("QPCAT UMAP1", "QPCAT UMAP2", "QPCAT UMAP3", "Nucleus: Area"));
+        assertThat(r).containsExactly("QPCAT UMAP1", "QPCAT UMAP2", "QPCAT UMAP3");
+        assertThat(AxisAutoDetect.detectedFamily(List.of("QPCAT UMAP1", "QPCAT UMAP2", "QPCAT UMAP3")))
+                .isEqualTo("UMAP");
+    }
+
+    @Test
+    void anUnrelatedNameEndingInADigitIsStillNotAnEmbedding() {
+        assertThat(AxisAutoDetect.detect(List.of("Cell: CD3", "Cell: CD4", "Cell: CD8"))).isEmpty();
+    }
 }

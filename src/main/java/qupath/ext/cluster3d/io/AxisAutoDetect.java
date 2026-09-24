@@ -45,6 +45,12 @@ public final class AxisAutoDetect {
         {"tSNE", "t[_\\-\\s]?sne"},
     };
 
+    // Writers may mark their own columns with a tool prefix -- QP-CAT names its
+    // embedding "QPCAT UMAP1" so that its output is distinguishable from a user's own
+    // measurements. Accept and ignore that marker rather than failing to recognise a
+    // family because of it.
+    private static final String OPTIONAL_TOOL_PREFIX = "(?:qpcat[_\\-\\s]+)?";
+
     /**
      * Detect an embedding triple among the given measurement names.
      *
@@ -141,7 +147,8 @@ public final class AxisAutoDetect {
         }
         for (String[] family : FAMILIES) {
             Pattern p = Pattern.compile(
-                    "^\\s*" + family[1] + "[_\\-\\s]?0*([0-9]+)\\s*$", Pattern.CASE_INSENSITIVE);
+                    "^\\s*" + OPTIONAL_TOOL_PREFIX + family[1] + "[_\\-\\s]?0*([0-9]+)\\s*$",
+                    Pattern.CASE_INSENSITIVE);
             Matcher m = p.matcher(name);
             if (m.matches()) {
                 return new String[] {family[0], String.valueOf(Integer.parseInt(m.group(1)))};
@@ -163,8 +170,9 @@ public final class AxisAutoDetect {
     private static List<String> findComponents(List<String> names, String baseRegex, int count) {
         String[] found = new String[count];
         for (int comp = 1; comp <= count; comp++) {
-            Pattern p =
-                    Pattern.compile("^\\s*" + baseRegex + "[_\\-\\s]?0*" + comp + "\\s*$", Pattern.CASE_INSENSITIVE);
+            Pattern p = Pattern.compile(
+                    "^\\s*" + OPTIONAL_TOOL_PREFIX + baseRegex + "[_\\-\\s]?0*" + comp + "\\s*$",
+                    Pattern.CASE_INSENSITIVE);
             for (String name : names) {
                 if (name == null) {
                     continue;
