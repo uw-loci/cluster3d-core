@@ -138,4 +138,35 @@ class AxisAutoDetectTest {
     void anUnrelatedNameEndingInADigitIsStillNotAnEmbedding() {
         assertThat(AxisAutoDetect.detect(List.of("Cell: CD3", "Cell: CD4", "Cell: CD8"))).isEmpty();
     }
+
+    /**
+     * QP-CAT's default embedding name carries the dimensionality, so a 3D run
+     * writes "3DUMAP1". The axis row read "no embedding detected" next to three
+     * correctly-chosen UMAP axes because the prefix rule only knew "qpcat ".
+     */
+    @Test
+    void detectsAFamilyBehindARunNamePrefix() {
+        assertThat(AxisAutoDetect.detect(
+                List.of("3DUMAP1", "3DUMAP2", "3DUMAP3", "Nucleus: Area")))
+                .containsExactly("3DUMAP1", "3DUMAP2", "3DUMAP3");
+        assertThat(AxisAutoDetect.detectedFamily(List.of("3DUMAP1", "3DUMAP2", "3DUMAP3")))
+                .isEqualTo("UMAP");
+        assertThat(AxisAutoDetect.detect(
+                List.of("QPCAT 3D UMAP1", "QPCAT 3D UMAP2", "QPCAT 3D UMAP3")))
+                .containsExactly("QPCAT 3D UMAP1", "QPCAT 3D UMAP2", "QPCAT 3D UMAP3");
+        // A run name can sit on either side of the family token.
+        assertThat(AxisAutoDetect.detect(
+                List.of("UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3")))
+                .containsExactly("UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3");
+    }
+
+    /** The prefix must not turn unrelated measurements into embedding axes. */
+    @Test
+    void aPrefixRuleStillRejectsOrdinaryMeasurements() {
+        assertThat(AxisAutoDetect.detect(
+                List.of("QPCAT CN 1", "QPCAT CN 2", "QPCAT CN 3"))).isEmpty();
+        assertThat(AxisAutoDetect.detect(
+                List.of("Cell: Area 1", "Cell: Area 2", "Cell: Area 3"))).isEmpty();
+        assertThat(AxisAutoDetect.parseComponent("Nucleus: Circularity")).isNull();
+    }
 }

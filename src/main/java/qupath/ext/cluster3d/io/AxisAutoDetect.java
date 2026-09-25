@@ -45,11 +45,33 @@ public final class AxisAutoDetect {
         {"tSNE", "t[_\\-\\s]?sne"},
     };
 
-    // Writers may mark their own columns with a tool prefix -- QP-CAT names its
-    // embedding "QPCAT UMAP1" so that its output is distinguishable from a user's own
-    // measurements. Accept and ignore that marker rather than failing to recognise a
-    // family because of it.
-    private static final String OPTIONAL_TOOL_PREFIX = "(?:qpcat[_\\-\\s]+)?";
+    // A writer may put anything in front of the family token, and two things
+    // routinely do: a tool marker ("QPCAT UMAP1", so QP-CAT's output is
+    // distinguishable from a user's own measurements) and a RUN NAME. QP-CAT
+    // defaults the embedding name to include the dimensionality, so a 3D run
+    // writes "3DUMAP1" -- and a prefix rule that only knew about "qpcat " failed
+    // to recognise that as UMAP at all, leaving the axis row reading "no
+    // embedding detected" beside three correctly-chosen UMAP axes.
+    //
+    // Bounded and conservative: letters, digits, underscore, hyphen and space
+    // only, at most 16 characters, and lazy so the LAST family occurrence in a
+    // name wins. The family token and its component digit must still close the
+    // name, which is what keeps "Nucleus: Area" and "QPCAT CN 3" out.
+    // A free-form prefix is too permissive: "QPCAT" CONTAINS "PCA", so
+    // "QPCAT CN 1" parsed as PCA component 1. The prefix must therefore end at a
+    // separator, or be a dimensionality tag ("2D", "3D") written flush against
+    // the family, which is the form QP-CAT's default embedding name produces.
+    private static final String OPTIONAL_TOOL_PREFIX =
+            "(?:[A-Za-z0-9_\\-\\s]{0,16}[_\\-\\s]|[0-9]{1,2}[dD])?";
+
+    // ...and a run name can also land BETWEEN the family and the component digit,
+    // because QP-CAT lets you name an embedding whatever you like: "UMAP_Demo"
+    // writes "UMAP_Demo1". Same bounded character class.
+    //
+    // A false positive here costs a wrong pre-selection in three dropdowns the
+    // user can change; a false negative costs the axis row telling them no
+    // embedding exists when it does. The trade is deliberately in this direction.
+    private static final String OPTIONAL_RUN_NAME = "(?:[A-Za-z0-9_\\-\\s]{0,16}?)";
 
     /**
      * Detect an embedding triple among the given measurement names.
@@ -147,7 +169,8 @@ public final class AxisAutoDetect {
         }
         for (String[] family : FAMILIES) {
             Pattern p = Pattern.compile(
-                    "^\\s*" + OPTIONAL_TOOL_PREFIX + family[1] + "[_\\-\\s]?0*([0-9]+)\\s*$",
+                    "^\\s*" + OPTIONAL_TOOL_PREFIX + family[1] + OPTIONAL_RUN_NAME
+                            + "[_\\-\\s]?0*([0-9]+)\\s*$",
                     Pattern.CASE_INSENSITIVE);
             Matcher m = p.matcher(name);
             if (m.matches()) {
@@ -171,7 +194,8 @@ public final class AxisAutoDetect {
         String[] found = new String[count];
         for (int comp = 1; comp <= count; comp++) {
             Pattern p = Pattern.compile(
-                    "^\\s*" + OPTIONAL_TOOL_PREFIX + baseRegex + "[_\\-\\s]?0*" + comp + "\\s*$",
+                    "^\\s*" + OPTIONAL_TOOL_PREFIX + baseRegex + OPTIONAL_RUN_NAME
+                            + "[_\\-\\s]?0*" + comp + "\\s*$",
                     Pattern.CASE_INSENSITIVE);
             for (String name : names) {
                 if (name == null) {

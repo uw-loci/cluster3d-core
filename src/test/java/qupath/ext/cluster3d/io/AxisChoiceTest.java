@@ -31,11 +31,16 @@ class AxisChoiceTest {
     }
 
     @Test
-    void anUnrecognisedEmbeddingNameNoLongerFallsBackToTheFirstMeasurements() {
-        // AxisAutoDetect cannot parse this family, so it contributes nothing.
-        assertEquals(List.of(), AxisAutoDetect.detect(NUMERIC));
+    void aCustomEmbeddingNameNeverFallsBackToTheFirstMeasurements() {
+        // "UMAP_Demo1" carries a run name between the family and the component.
+        // Auto-detect reads it now (it used to contribute nothing, which is how a
+        // correctly-axed 3D view came to report "no embedding detected"), and the
+        // host's own choice still wins on precedence either way.
+        assertEquals(List.of("UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3"),
+                AxisAutoDetect.detect(NUMERIC));
         AxisChoice.Result r = AxisChoice.choose(3, null, HOST, null, AxisAutoDetect.detect(NUMERIC), NUMERIC);
         assertArrayEquals(HOST, r.axes());
+        assertEquals(AxisChoice.Source.HOST, r.source());
     }
 
     @Test
