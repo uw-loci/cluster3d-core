@@ -80,8 +80,7 @@ class AxisAutoDetectTest {
     void detectsPairFromTwoComponentEmbedding() {
         List<String> r = AxisAutoDetect.detectPair(List.of("UMAP1", "UMAP2", "Area"));
         assertThat(r).containsExactly("UMAP1", "UMAP2");
-        assertThat(AxisAutoDetect.detectedFamilyPair(List.of("UMAP1", "UMAP2")))
-                .isEqualTo("UMAP");
+        assertThat(AxisAutoDetect.detectedFamilyPair(List.of("UMAP1", "UMAP2"))).isEqualTo("UMAP");
     }
 
     @Test
@@ -127,8 +126,7 @@ class AxisAutoDetectTest {
     /** QP-CAT marks its own columns "QPCAT UMAP1" so they can be told from user data. */
     @Test
     void aToolPrefixDoesNotHideTheFamily() {
-        List<String> r = AxisAutoDetect.detect(
-                List.of("QPCAT UMAP1", "QPCAT UMAP2", "QPCAT UMAP3", "Nucleus: Area"));
+        List<String> r = AxisAutoDetect.detect(List.of("QPCAT UMAP1", "QPCAT UMAP2", "QPCAT UMAP3", "Nucleus: Area"));
         assertThat(r).containsExactly("QPCAT UMAP1", "QPCAT UMAP2", "QPCAT UMAP3");
         assertThat(AxisAutoDetect.detectedFamily(List.of("QPCAT UMAP1", "QPCAT UMAP2", "QPCAT UMAP3")))
                 .isEqualTo("UMAP");
@@ -136,7 +134,8 @@ class AxisAutoDetectTest {
 
     @Test
     void anUnrelatedNameEndingInADigitIsStillNotAnEmbedding() {
-        assertThat(AxisAutoDetect.detect(List.of("Cell: CD3", "Cell: CD4", "Cell: CD8"))).isEmpty();
+        assertThat(AxisAutoDetect.detect(List.of("Cell: CD3", "Cell: CD4", "Cell: CD8")))
+                .isEmpty();
     }
 
     /**
@@ -146,27 +145,24 @@ class AxisAutoDetectTest {
      */
     @Test
     void detectsAFamilyBehindARunNamePrefix() {
-        assertThat(AxisAutoDetect.detect(
-                List.of("3DUMAP1", "3DUMAP2", "3DUMAP3", "Nucleus: Area")))
+        assertThat(AxisAutoDetect.detect(List.of("3DUMAP1", "3DUMAP2", "3DUMAP3", "Nucleus: Area")))
                 .containsExactly("3DUMAP1", "3DUMAP2", "3DUMAP3");
         assertThat(AxisAutoDetect.detectedFamily(List.of("3DUMAP1", "3DUMAP2", "3DUMAP3")))
                 .isEqualTo("UMAP");
-        assertThat(AxisAutoDetect.detect(
-                List.of("QPCAT 3D UMAP1", "QPCAT 3D UMAP2", "QPCAT 3D UMAP3")))
+        assertThat(AxisAutoDetect.detect(List.of("QPCAT 3D UMAP1", "QPCAT 3D UMAP2", "QPCAT 3D UMAP3")))
                 .containsExactly("QPCAT 3D UMAP1", "QPCAT 3D UMAP2", "QPCAT 3D UMAP3");
         // A run name can sit on either side of the family token.
-        assertThat(AxisAutoDetect.detect(
-                List.of("UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3")))
+        assertThat(AxisAutoDetect.detect(List.of("UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3")))
                 .containsExactly("UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3");
     }
 
     /** The prefix must not turn unrelated measurements into embedding axes. */
     @Test
     void aPrefixRuleStillRejectsOrdinaryMeasurements() {
-        assertThat(AxisAutoDetect.detect(
-                List.of("QPCAT CN 1", "QPCAT CN 2", "QPCAT CN 3"))).isEmpty();
-        assertThat(AxisAutoDetect.detect(
-                List.of("Cell: Area 1", "Cell: Area 2", "Cell: Area 3"))).isEmpty();
+        assertThat(AxisAutoDetect.detect(List.of("QPCAT CN 1", "QPCAT CN 2", "QPCAT CN 3")))
+                .isEmpty();
+        assertThat(AxisAutoDetect.detect(List.of("Cell: Area 1", "Cell: Area 2", "Cell: Area 3")))
+                .isEmpty();
         assertThat(AxisAutoDetect.parseComponent("Nucleus: Circularity")).isNull();
     }
 }

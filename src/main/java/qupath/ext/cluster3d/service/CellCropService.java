@@ -22,7 +22,9 @@ import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
@@ -31,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.cluster3d.model.CellRef;
 import qupath.lib.common.ColorTools;
 import qupath.lib.display.ChannelDisplayInfo;
+import qupath.lib.display.DirectServerChannelInfo;
 import qupath.lib.display.ImageDisplay;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
@@ -106,6 +109,27 @@ public class CellCropService implements AutoCloseable {
      * @return the crop, or {@code null} if no server could be resolved / read failed
      */
     public BufferedImage readCrop(CellRef ref, double cropScale) {
+        return readCrop(ref, cropScale, null);
+    }
+
+    /**
+     * As {@link #readCrop(CellRef, double)}, but rendered in named channels
+     * rather than whatever the viewer currently shows.
+     * <p>
+     * A host that groups cells (by cluster, by class) usually knows which
+     * channels make a given group legible -- the markers that define it. Drawing
+     * every group in one fixed channel set means a group defined by a channel the
+     * user has switched off renders blank, which reads as a broken image rather
+     * than as a result.
+     *
+     * @param ref         the cell to crop around
+     * @param cropScale   crop side as a multiple of the cell's bounding box
+     * @param channelNames channels to render in; null, empty, or matching nothing
+     *                     falls back to the viewer's own selection rather than
+     *                     producing an all-black crop
+     * @return the crop, or null if no server could be resolved / the read failed
+     */
+    public BufferedImage readCrop(CellRef ref, double cropScale, List<String> channelNames) {
         if (ref == null) {
             return null;
         }
@@ -120,7 +144,7 @@ public class CellCropService implements AutoCloseable {
         try {
             RegionRequest request =
                     RegionRequest.createInstance(server.getPath(), w.downsample, w.x, w.y, w.side, w.side);
-            BufferedImage out = applyDisplay(ref, server, server.readRegion(request));
+            BufferedImage out = applyDisplay(ref, server, server.readRegion(request), channelNames);
             return bakeOutline(out, ref, w);
         } catch (Exception e) {
             logger.warn(
@@ -241,7 +265,8 @@ public class CellCropService implements AutoCloseable {
      * dump. For the open viewer image this uses the LIVE viewer display. Returns
      * the raw image unchanged if no display is available or the transform fails.
      */
-    private BufferedImage applyDisplay(CellRef ref, ImageServer<BufferedImage> server, BufferedImage raw) {
+    private BufferedImage applyDisplay(
+            CellRef ref, ImageServer<BufferedImage> server, BufferedImage raw, List<String> channelNames) {
         if (raw == null) {
             return null;
         }
@@ -251,11 +276,59 @@ public class CellCropService implements AutoCloseable {
         }
         try {
             return ImageDisplay.applyTransforms(
-                    raw, null, display.selectedChannels(), display.displayMode().getValue());
+                    raw,
+                    null,
+                    selectChannels(display, channelNames),
+                    display.displayMode().getValue());
         } catch (Exception e) {
             logger.warn("Display transform failed; using raw crop: {}", e.getMessage());
             return raw;
         }
+    }
+
+    /**
+     * The display channels named by {@code channelNames}, or the viewer's own
+     * selection when that is null/empty or nothing matches.
+     */
+    private static List<ChannelDisplayInfo> selectChannels(ImageDisplay display, List<String> channelNames) {
+        if (channelNames == null || channelNames.isEmpty()) {
+            return display.selectedChannels();
+        }
+        List<ChannelDisplayInfo> out = new ArrayList<>();
+        for (String want : channelNames) {
+            if (want == null || want.isBlank()) {
+                continue;
+            }
+            for (ChannelDisplayInfo info : display.availableChannels()) {
+                if (matchesChannel(info, want)) {
+                    if (!out.contains(info)) {
+                        out.add(info);
+                    }
+                    break;
+                }
+            }
+        }
+        // Nothing matched -> fall back rather than render an all-black crop.
+        return out.isEmpty() ? display.selectedChannels() : out;
+    }
+
+    /** Name match tolerant of QuPath's "NAME (C3)" decoration. */
+    private static boolean matchesChannel(ChannelDisplayInfo info, String want) {
+        if (info instanceof DirectServerChannelInfo direct) {
+            String original = direct.getOriginalChannelName();
+            if (original != null && want.equalsIgnoreCase(original)) {
+                return true;
+            }
+        }
+        String name = info.getName();
+        if (name == null) {
+            return false;
+        }
+        if (want.equalsIgnoreCase(name)) {
+            return true;
+        }
+        int paren = name.lastIndexOf(" (C");
+        return paren > 0 && want.equalsIgnoreCase(name.substring(0, paren));
     }
 
     private ImageDisplay resolveDisplay(CellRef ref, ImageServer<BufferedImage> server) {

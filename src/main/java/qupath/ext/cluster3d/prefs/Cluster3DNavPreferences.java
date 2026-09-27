@@ -93,8 +93,8 @@ public final class Cluster3DNavPreferences {
         showTripod = PathPrefs.createPersistentPreference(PREFIX + "showTripod", DEFAULT_SHOW_TRIPOD);
         hoverPreview = PathPrefs.createPersistentPreference(PREFIX + "hoverPreview", DEFAULT_HOVER_PREVIEW);
         showCellImages = PathPrefs.createPersistentPreference(PREFIX + "showCellImages", DEFAULT_SHOW_CELL_IMAGES);
-        showDetectionOutlines = PathPrefs.createPersistentPreference(
-                PREFIX + "showDetectionOutlines", DEFAULT_SHOW_DETECTION_OUTLINES);
+        showDetectionOutlines =
+                PathPrefs.createPersistentPreference(PREFIX + "showDetectionOutlines", DEFAULT_SHOW_DETECTION_OUTLINES);
         representativesPerCluster = PathPrefs.createPersistentPreference(
                 PREFIX + "representativesPerCluster", DEFAULT_REPRESENTATIVES_PER_CLUSTER);
         cellLimitPerImage =

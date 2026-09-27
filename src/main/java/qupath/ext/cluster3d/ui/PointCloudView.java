@@ -1088,8 +1088,8 @@ public class PointCloudView extends Pane {
             + "Click a point to center and select that cell.";
 
     /** Gesture cheat-sheet for the flat 2D view (no rotation). */
-    static final String GESTURE_HINT_2D = "Left-drag or middle-drag to pan, scroll to zoom. "
-            + "Click a point to center and select that cell.";
+    static final String GESTURE_HINT_2D =
+            "Left-drag or middle-drag to pan, scroll to zoom. " + "Click a point to center and select that cell.";
 
     private String gestureHint() {
         return twoD ? GESTURE_HINT_2D : GESTURE_HINT;

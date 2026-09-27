@@ -59,13 +59,7 @@ public class CellRef {
 
     /** Back-reference that also carries a precomputed outline + packed class color. */
     public CellRef(
-            String imageId,
-            String imageName,
-            double x,
-            double y,
-            double bboxHalf,
-            Shape roiOutline,
-            int roiColorRgb) {
+            String imageId, String imageName, double x, double y, double bboxHalf, Shape roiOutline, int roiColorRgb) {
         this.imageId = imageId;
         this.imageName = imageName;
         this.x = x;

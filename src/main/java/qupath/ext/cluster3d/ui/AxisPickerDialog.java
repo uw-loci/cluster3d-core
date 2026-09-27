@@ -75,9 +75,8 @@ public final class AxisPickerDialog {
 
         Dialog<ButtonType> dialog = new Dialog<>();
         dialog.setTitle("Choose axes");
-        dialog.setHeaderText(twoD
-                ? "Pick two numeric measurements for X / Y."
-                : "Pick three numeric measurements for X / Y / Z.");
+        dialog.setHeaderText(
+                twoD ? "Pick two numeric measurements for X / Y." : "Pick three numeric measurements for X / Y / Z.");
         if (owner != null) {
             dialog.initOwner(owner);
         }
@@ -120,8 +119,8 @@ public final class AxisPickerDialog {
 
         VBox content = new VBox(8, grid);
         if (twoD) {
-            Label note = new Label(
-                    "For a 2D view, use a real 2D embedding (e.g. a 2D UMAP computed for two components). "
+            Label note =
+                    new Label("For a 2D view, use a real 2D embedding (e.g. a 2D UMAP computed for two components). "
                             + "Do NOT pick two axes of a 3D embedding -- a 2D UMAP is optimized for two "
                             + "dimensions and will not match any 2-axis slice of a 3D UMAP.");
             note.setWrapText(true);
@@ -134,8 +133,7 @@ public final class AxisPickerDialog {
         dialog.getDialogPane().setContent(content);
 
         Runnable validate = () -> {
-            boolean allSet =
-                    cx.getValue() != null && cy.getValue() != null && (twoD || cz.getValue() != null);
+            boolean allSet = cx.getValue() != null && cy.getValue() != null && (twoD || cz.getValue() != null);
             dialog.getDialogPane().lookupButton(applyType).setDisable(!allSet);
             boolean sameAxis;
             if (twoD) {
@@ -155,8 +153,8 @@ public final class AxisPickerDialog {
 
         Optional<ButtonType> res = dialog.showAndWait();
         if (res.isPresent() && res.get() == applyType) {
-            return Optional.of(new Result(
-                    cx.getValue(), cy.getValue(), twoD ? null : cz.getValue(), remember.isSelected()));
+            return Optional.of(
+                    new Result(cx.getValue(), cy.getValue(), twoD ? null : cz.getValue(), remember.isSelected()));
         }
         return Optional.empty();
     }

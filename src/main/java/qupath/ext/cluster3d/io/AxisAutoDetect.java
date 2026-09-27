@@ -61,8 +61,7 @@ public final class AxisAutoDetect {
     // "QPCAT CN 1" parsed as PCA component 1. The prefix must therefore end at a
     // separator, or be a dimensionality tag ("2D", "3D") written flush against
     // the family, which is the form QP-CAT's default embedding name produces.
-    private static final String OPTIONAL_TOOL_PREFIX =
-            "(?:[A-Za-z0-9_\\-\\s]{0,16}[_\\-\\s]|[0-9]{1,2}[dD])?";
+    private static final String OPTIONAL_TOOL_PREFIX = "(?:[A-Za-z0-9_\\-\\s]{0,16}[_\\-\\s]|[0-9]{1,2}[dD])?";
 
     // ...and a run name can also land BETWEEN the family and the component digit,
     // because QP-CAT lets you name an embedding whatever you like: "UMAP_Demo"
@@ -169,8 +168,7 @@ public final class AxisAutoDetect {
         }
         for (String[] family : FAMILIES) {
             Pattern p = Pattern.compile(
-                    "^\\s*" + OPTIONAL_TOOL_PREFIX + family[1] + OPTIONAL_RUN_NAME
-                            + "[_\\-\\s]?0*([0-9]+)\\s*$",
+                    "^\\s*" + OPTIONAL_TOOL_PREFIX + family[1] + OPTIONAL_RUN_NAME + "[_\\-\\s]?0*([0-9]+)\\s*$",
                     Pattern.CASE_INSENSITIVE);
             Matcher m = p.matcher(name);
             if (m.matches()) {
@@ -194,8 +192,7 @@ public final class AxisAutoDetect {
         String[] found = new String[count];
         for (int comp = 1; comp <= count; comp++) {
             Pattern p = Pattern.compile(
-                    "^\\s*" + OPTIONAL_TOOL_PREFIX + baseRegex + OPTIONAL_RUN_NAME
-                            + "[_\\-\\s]?0*" + comp + "\\s*$",
+                    "^\\s*" + OPTIONAL_TOOL_PREFIX + baseRegex + OPTIONAL_RUN_NAME + "[_\\-\\s]?0*" + comp + "\\s*$",
                     Pattern.CASE_INSENSITIVE);
             for (String name : names) {
                 if (name == null) {

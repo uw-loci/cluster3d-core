@@ -17,9 +17,8 @@ import org.junit.jupiter.api.Test;
  */
 class AxisChoiceTest {
 
-    private static final List<String> NUMERIC =
-            List.of("Nucleus: Area", "Nucleus: Length", "Nucleus: Circularity", "UMAP_Demo1", "UMAP_Demo2",
-                    "UMAP_Demo3");
+    private static final List<String> NUMERIC = List.of(
+            "Nucleus: Area", "Nucleus: Length", "Nucleus: Circularity", "UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3");
 
     private static final String[] HOST = {"UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3"};
 
@@ -36,8 +35,7 @@ class AxisChoiceTest {
         // Auto-detect reads it now (it used to contribute nothing, which is how a
         // correctly-axed 3D view came to report "no embedding detected"), and the
         // host's own choice still wins on precedence either way.
-        assertEquals(List.of("UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3"),
-                AxisAutoDetect.detect(NUMERIC));
+        assertEquals(List.of("UMAP_Demo1", "UMAP_Demo2", "UMAP_Demo3"), AxisAutoDetect.detect(NUMERIC));
         AxisChoice.Result r = AxisChoice.choose(3, null, HOST, null, AxisAutoDetect.detect(NUMERIC), NUMERIC);
         assertArrayEquals(HOST, r.axes());
         assertEquals(AxisChoice.Source.HOST, r.source());

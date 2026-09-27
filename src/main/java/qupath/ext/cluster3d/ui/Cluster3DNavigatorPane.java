@@ -117,6 +117,14 @@ public class Cluster3DNavigatorPane extends BorderPane {
     private final ImageView previewView = new ImageView();
     private final Label previewCaption = new Label("");
     private final Button updateFromViewerButton = new Button("Update from viewer");
+    /** Offered only when a host supplies per-class channels; see setPreviewChannels. */
+    private CheckBox perClassChannelsCheck;
+    /**
+     * Class DISPLAY NAME -> display channels, supplied by the host. Keyed by name
+     * rather than by index: the index is this pane's own ordering of the classes
+     * it found, which the host has no way to predict.
+     */
+    private java.util.function.Function<String, List<String>> previewChannelsForClass;
 
     private final StackPane centerStack = new StackPane();
     private final VBox busyBox = new VBox(8);
@@ -213,8 +221,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
      * @param entries       the selected project-image entries (may be null/empty)
      * @param preferredAxes embedding column names, or null to auto-detect as before
      */
-    public void initializeForHost(
-            List<ProjectImageEntry<BufferedImage>> entries, String[] preferredAxes) {
+    public void initializeForHost(List<ProjectImageEntry<BufferedImage>> entries, String[] preferredAxes) {
         this.hostPreferredAxes = (preferredAxes == null) ? null : preferredAxes.clone();
         this.hostMode = true;
         this.selectedEntries = (entries == null) ? null : new java.util.ArrayList<>(entries);
@@ -224,6 +231,47 @@ public class Cluster3DNavigatorPane extends BorderPane {
         modeControls.setManaged(false);
         applyAccentColors();
         reload();
+    }
+
+    /**
+     * Offer per-class display channels for the cell preview.
+     * <p>
+     * A host that groups cells usually knows which channels make a given group
+     * legible -- the markers that define it. Without this the preview always uses
+     * the viewer's channels, so a group defined by a channel the user has
+     * switched off renders blank and reads as a broken image.
+     * <p>
+     * Calling this reveals the option; it starts OFF, so the preview behaves as
+     * before until the user asks. Passing null hides it again.
+     *
+     * @param channelsForClass class display name -&gt; channel names, or null to
+     *                         withdraw the option. Keyed by NAME because the
+     *                         class index is this pane's own ordering.
+     */
+    public void setPreviewChannels(java.util.function.Function<String, List<String>> channelsForClass) {
+        this.previewChannelsForClass = channelsForClass;
+        boolean offered = channelsForClass != null;
+        perClassChannelsCheck.setVisible(offered);
+        perClassChannelsCheck.setManaged(offered);
+        if (!offered) {
+            perClassChannelsCheck.setSelected(false);
+        }
+    }
+
+    /**
+     * The channels to preview cell {@code index} in, or null to keep the
+     * viewer's own selection (the option withdrawn, or switched off).
+     */
+    private List<String> previewChannels(int index) {
+        if (previewChannelsForClass == null
+                || perClassChannelsCheck == null
+                || !perClassChannelsCheck.isSelected()
+                || data == null
+                || index < 0
+                || index >= data.classIdx.length) {
+            return null;
+        }
+        return previewChannelsForClass.apply(data.classDisplayName(data.classIdx[index]));
     }
 
     /** The window currently hosting this pane, or null if not attached/shown. */
@@ -318,9 +366,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
         dim3D.setToggleGroup(dimGroup);
         dim2D.setToggleGroup(dimGroup);
         dim3D.setTooltip(new Tooltip("Rotatable 3D cloud. Needs a 3-component embedding (e.g. UMAP1/2/3)."));
-        dim2D.setTooltip(new Tooltip(
-                "Flat top-down X/Y scatter. Use a genuine 2D embedding (e.g. a 2D UMAP), "
-                        + "NOT two axes of a 3D embedding."));
+        dim2D.setTooltip(new Tooltip("Flat top-down X/Y scatter. Use a genuine 2D embedding (e.g. a 2D UMAP), "
+                + "NOT two axes of a 3D embedding."));
         twoD = "2d".equals(Cluster3DNavPreferences.dimensionsProperty().get());
         suppressDimEvents = true;
         (twoD ? dim2D : dim3D).setSelected(true);
@@ -341,9 +388,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
             c.valueProperty().addListener((o, a, b) -> onAxisComboChanged());
         }
         autoTag.setStyle(ThemeUtils.autoDetectStyle(false));
-        autoTag.setTooltip(
-                new Tooltip(
-                        "These axes were detected automatically from measurement names. Change any of them to override."));
+        autoTag.setTooltip(new Tooltip(
+                "These axes were detected automatically from measurement names. Change any of them to override."));
         Button changeAxes = new Button("Change axes...");
         changeAxes.setTooltip(new Tooltip("Pick which numeric measurements map to the axes."));
         changeAxes.setOnAction(e -> openAxisPicker());
@@ -361,7 +407,15 @@ public class Cluster3DNavigatorPane extends BorderPane {
         cloudView.setShowCellImages(cellImages.isSelected());
 
         HBox axisRow = new HBox(
-                8, new Label("Axes:"), new Label("X"), axisX, new Label("Y"), axisY, zLabel, axisZ, autoTag,
+                8,
+                new Label("Axes:"),
+                new Label("X"),
+                axisX,
+                new Label("Y"),
+                axisY,
+                zLabel,
+                axisZ,
+                autoTag,
                 changeAxes);
         axisRow.setAlignment(Pos.CENTER_LEFT);
 
@@ -437,7 +491,22 @@ public class Cluster3DNavigatorPane extends BorderPane {
                 "Re-render the cell preview using the viewer's current channel visibility and brightness/contrast."));
         updateFromViewerButton.setDisable(true); // enabled once a cell has been previewed
         updateFromViewerButton.setOnAction(e -> refreshPreviewFromViewer());
-        VBox previewBox = new VBox(4, previewHeader, previewView, previewCaption, updateFromViewerButton);
+        // Per-class channels, when the host offers them. Hidden until it does, so
+        // the standalone navigator is unchanged.
+        perClassChannelsCheck = new CheckBox("Use per-cluster channels");
+        perClassChannelsCheck.setStyle("-fx-font-size: 10px;");
+        perClassChannelsCheck.setWrapText(true);
+        perClassChannelsCheck.setTooltip(
+                new Tooltip("Render the preview in the channels the host picked for THIS cell's "
+                        + "cluster, rather than whatever the viewer is showing.\n\n"
+                        + "Off, every cluster is drawn in the same channels, so one defined by "
+                        + "a channel you have hidden looks blank."));
+        perClassChannelsCheck.setVisible(false);
+        perClassChannelsCheck.setManaged(false);
+        perClassChannelsCheck.selectedProperty().addListener((o, a, b) -> refreshPreviewFromViewer());
+
+        VBox previewBox =
+                new VBox(4, previewHeader, previewView, previewCaption, perClassChannelsCheck, updateFromViewerButton);
         previewBox.setPadding(new Insets(6));
         VBox right = new VBox(6, legend, previewBox);
         VBox.setVgrow(legend, Priority.ALWAYS);
@@ -508,7 +577,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
         // class color -- in both the in-cloud thumbnails and the Cell preview. Baked into the
         // crop by CellCropService, so toggling clears the crop caches and re-renders.
         CheckBox outlines = new CheckBox("Show detection outlines");
-        outlines.setSelected(Cluster3DNavPreferences.showDetectionOutlinesProperty().get());
+        outlines.setSelected(
+                Cluster3DNavPreferences.showDetectionOutlinesProperty().get());
         outlines.setTooltip(new Tooltip("Draw each cell's segmentation boundary on its crop image "
                 + "(thumbnails + Cell preview). Helps spot clusters caused by segmentation errors."));
         outlines.selectedProperty().addListener((o, a, b) -> {
@@ -729,7 +799,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
      */
     private void applyDimensions(int numericCount) {
         boolean canDo3D = numericCount >= 3;
-        boolean want2D = "2d".equals(Cluster3DNavPreferences.dimensionsProperty().get());
+        boolean want2D =
+                "2d".equals(Cluster3DNavPreferences.dimensionsProperty().get());
         twoD = want2D || !canDo3D;
         suppressDimEvents = true;
         (twoD ? dim2D : dim3D).setSelected(true);
@@ -856,10 +927,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
                     try {
                         if (pm) {
                             result = DetectionReader.readEntries(
-                                    selEntries,
-                                    msg -> Platform.runLater(() -> busyLabel.setText(msg)),
-                                    opts,
-                                    imgData);
+                                    selEntries, msg -> Platform.runLater(() -> busyLabel.setText(msg)), opts, imgData);
                         } else {
                             result = DetectionReader.readImage(imgData, fImageId, fImageName, opts);
                         }
@@ -961,9 +1029,10 @@ public class Cluster3DNavigatorPane extends BorderPane {
             data = null;
             cloudView.setData(null);
             legend.setData(null);
-            cloudView.setEmptyMessage(z == null
-                    ? "No cells have finite values on both chosen axes."
-                    : "No cells have finite values on all three chosen axes.");
+            cloudView.setEmptyMessage(
+                    z == null
+                            ? "No cells have finite values on both chosen axes."
+                            : "No cells have finite values on all three chosen axes.");
             updatePointsLabel();
             updateNotes();
             return;
@@ -984,10 +1053,11 @@ public class Cluster3DNavigatorPane extends BorderPane {
     /** Show/hide the "2 axes of a 3D embedding" warning for the current 2D axis choice. */
     private void updateTwoOfThreeWarning(String x, String y) {
         boolean warn = twoD && AxisAutoDetect.isTwoOfThree(numericAxes, x, y);
-        twoOfThreeWarn.setText(warn
-                ? "Warning: X and Y are two components of a 3D embedding. A 2D view of a 3D embedding is "
-                        + "not a true 2D embedding -- for a correct 2D view, compute a 2D embedding (e.g. a 2D UMAP)."
-                : "");
+        twoOfThreeWarn.setText(
+                warn
+                        ? "Warning: X and Y are two components of a 3D embedding. A 2D view of a 3D embedding is "
+                                + "not a true 2D embedding -- for a correct 2D view, compute a 2D embedding (e.g. a 2D UMAP)."
+                        : "");
         twoOfThreeWarn.setStyle(ThemeUtils.warningStyle(ThemeUtils.isDark(getScene())));
         twoOfThreeWarn.setVisible(warn);
         twoOfThreeWarn.setManaged(warn);
@@ -1009,9 +1079,10 @@ public class Cluster3DNavigatorPane extends BorderPane {
     /** Tag the axis row with where the choice came from, and return the axes. */
     private String[] applyChoice(AxisChoice.Result choice, List<String> numeric, int n) {
         switch (choice.source()) {
-            case AUTO_DETECTED -> autoTag.setText("(auto-detected: "
-                    + (n == 3 ? AxisAutoDetect.detectedFamily(numeric) : AxisAutoDetect.detectedFamilyPair(numeric))
-                    + ")");
+            case AUTO_DETECTED ->
+                autoTag.setText("(auto-detected: "
+                        + (n == 3 ? AxisAutoDetect.detectedFamily(numeric) : AxisAutoDetect.detectedFamilyPair(numeric))
+                        + ")");
             case HOST -> autoTag.setText("(this result's embedding)");
             case FALLBACK -> autoTag.setText("(no embedding detected -- pick " + n + " axes)");
             default -> autoTag.setText("");
@@ -1137,13 +1208,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
         String[] remembered = Cluster3DNavPreferences.getLastAxes(projectKey());
         boolean rememberInit = twoD ? isValid2D(remembered, numericAxes) : isValid(remembered, numericAxes);
         Optional<AxisPickerDialog.Result> res = AxisPickerDialog.show(
-                ownerWindow(),
-                numericAxes,
-                axisX.getValue(),
-                axisY.getValue(),
-                axisZ.getValue(),
-                rememberInit,
-                twoD);
+                ownerWindow(), numericAxes, axisX.getValue(), axisY.getValue(), axisZ.getValue(), rememberInit, twoD);
         res.ifPresent(r -> {
             autoTag.setText("");
             requestedAxes = twoD ? new String[] {r.x, r.y} : new String[] {r.x, r.y, r.z};
@@ -1181,7 +1246,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
         previewCaption.setText("Loading crop...");
         Thread t = new Thread(
                 () -> {
-                    BufferedImage crop = cropService.readCrop(ref, scale);
+                    BufferedImage crop = cropService.readCrop(ref, scale, previewChannels(index));
                     Image fx = crop != null ? SwingFXUtils.toFXImage(crop, null) : null;
                     Platform.runLater(() -> {
                         if (token != previewToken) {

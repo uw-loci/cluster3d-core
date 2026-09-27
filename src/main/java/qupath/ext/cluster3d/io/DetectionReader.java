@@ -14,19 +14,18 @@ package qupath.ext.cluster3d.io;
 
 import java.awt.Shape;
 import java.awt.geom.Path2D;
-import java.awt.geom.PathIterator;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.TreeSet;
 import java.util.function.Consumer;
 import javafx.scene.paint.Color;
 import org.slf4j.Logger;
@@ -232,8 +231,8 @@ public final class DetectionReader {
             return new ReadResult(records, numericMeasurementUnion(maps), false, false);
         }
         int n = entries.size();
-        int threads = Math.max(1, Math.min(MAX_READ_THREADS, Math.min(n, Runtime.getRuntime()
-                .availableProcessors() - 1)));
+        int threads = Math.max(
+                1, Math.min(MAX_READ_THREADS, Math.min(n, Runtime.getRuntime().availableProcessors() - 1)));
         // Per-entry slots keep the merge order deterministic regardless of completion order.
         List<List<CellRecord>> recordSlots = new ArrayList<>(n);
         List<List<Map<String, Double>>> mapSlots = new ArrayList<>(n);
@@ -349,8 +348,7 @@ public final class DetectionReader {
             // without retaining the live ROI or calling its non-thread-safe getShape().
             Shape outline = captureOutline(roi);
             int rgb = (pc != null && pc != PathClass.getNullClass() && pc.getColor() != null) ? pc.getColor() : 0;
-            CellRef ref =
-                    new CellRef(imageId, imageName, roi.getCentroidX(), roi.getCentroidY(), half, outline, rgb);
+            CellRef ref = new CellRef(imageId, imageName, roi.getCentroidX(), roi.getCentroidY(), half, outline, rgb);
             recs.add(new CellRecord(ref, pc, m));
             maps.add(m);
             xs.add(roi.getCentroidX());
