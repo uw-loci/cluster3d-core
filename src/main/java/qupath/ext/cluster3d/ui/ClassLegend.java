@@ -38,6 +38,13 @@ public class ClassLegend extends VBox {
     private final Label header = new Label("CLASSES");
     private boolean[] visible = new boolean[0];
     private Runnable onChange = () -> {};
+    // Class name -> whether it was shown, carried across a reload. Changing an
+    // axis measurement re-reads the detections and rebuilds this legend, and
+    // rebuilding used to turn every class back on -- so narrowing to two classes
+    // and then looking at them against a different measurement, which is the
+    // normal way to use this, silently put all twenty back.
+    private final java.util.Map<String, Boolean> rememberedVisibility =
+            new java.util.HashMap<>();
 
     public ClassLegend() {
         setSpacing(6);
@@ -68,7 +75,12 @@ public class ClassLegend extends VBox {
         this.onChange = onChange == null ? () -> {} : onChange;
     }
 
-    /** Rebuild the rows for a new dataset. All classes start visible. */
+    /**
+     * Rebuild the rows for a new dataset, keeping each class's shown / hidden
+     * state from the previous dataset. State is remembered by class NAME, not by
+     * index, so it survives a class set that gains, loses or reorders entries; a
+     * class never seen before starts visible.
+     */
     public void setData(PointCloudData data) {
         rows.getChildren().clear();
         if (data == null || data.classCount() == 0) {
@@ -76,19 +88,54 @@ public class ClassLegend extends VBox {
             return;
         }
         int n = data.classCount();
-        visible = new boolean[n];
+        String[] names = new String[n];
         for (int i = 0; i < n; i++) {
-            visible[i] = true;
-            rows.getChildren().add(makeRow(data, i));
+            names[i] = data.classDisplayName(i);
+        }
+        visible = restoreVisibility(names, rememberedVisibility);
+        for (int i = 0; i < n; i++) {
+            rememberedVisibility.put(names[i], visible[i]);
+            rows.getChildren().add(makeRow(data, i, visible[i]));
         }
     }
 
-    private HBox makeRow(PointCloudData data, int classIndex) {
+    /**
+     * Visibility for a new class list, from what was remembered of the old one.
+     * <p>
+     * A name not seen before is visible. A remembered set that would hide EVERY
+     * class in the new list is ignored and everything is shown, because an empty
+     * cloud after an axis change looks like a failed read and has no visible
+     * cause to click back.
+     *
+     * @param names      class display names, in display order
+     * @param remembered name -> shown, from the previous dataset
+     * @return one flag per name, index-aligned
+     */
+    static boolean[] restoreVisibility(String[] names,
+                                       java.util.Map<String, Boolean> remembered) {
+        boolean[] out = new boolean[names.length];
+        boolean anyShown = false;
+        for (String name : names) {
+            if (remembered.getOrDefault(name, Boolean.TRUE)) {
+                anyShown = true;
+                break;
+            }
+        }
+        for (int i = 0; i < names.length; i++) {
+            out[i] = !anyShown || remembered.getOrDefault(names[i], Boolean.TRUE);
+        }
+        return out;
+    }
+
+
+    private HBox makeRow(PointCloudData data, int classIndex, boolean shown) {
         CheckBox cb = new CheckBox();
-        cb.setSelected(true);
+        cb.setSelected(shown);
         cb.setTooltip(new javafx.scene.control.Tooltip("Show or hide this class in the cloud."));
+        String className = data.classDisplayName(classIndex);
         cb.selectedProperty().addListener((obs, was, now) -> {
             visible[classIndex] = now;
+            rememberedVisibility.put(className, now);
             onChange.run();
         });
 
