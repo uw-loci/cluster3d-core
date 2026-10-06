@@ -60,6 +60,8 @@ import qupath.ext.cluster3d.service.CellCropService;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.images.ImageData;
+import qupath.lib.objects.PathObject;
+import qupath.lib.objects.classes.PathClass;
 import qupath.lib.projects.Project;
 import qupath.lib.projects.ProjectImageEntry;
 
@@ -136,6 +138,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
     // Axes the host says this view is for (e.g. the embedding a clustering run just wrote).
     // Outranks the remembered per-project pick -- see AxisChoice.choose.
     private String[] hostPreferredAxes;
+    /** Host-supplied grouping, or null to read each object's own classification. */
+    private java.util.function.BiFunction<String, PathObject, PathClass> hostLabelOverride;
     private PointCloudData data;
     private int lastPreviewIndex = -1; // last cell shown in the Cell preview panel
     private boolean suppressAxisEvents = false;
@@ -222,6 +226,29 @@ public class Cluster3DNavigatorPane extends BorderPane {
      * @param preferredAxes embedding column names, or null to auto-detect as before
      */
     public void initializeForHost(List<ProjectImageEntry<BufferedImage>> entries, String[] preferredAxes) {
+        initializeForHost(entries, preferredAxes, null);
+    }
+
+    /**
+     * As {@link #initializeForHost(List, String[])}, but the host also supplies each
+     * cell's group instead of the pane reading it off the object.
+     * <p>
+     * A host displaying a STORED grouping needs this. The cells in the project carry
+     * whatever classification they carry now; after any later run that is no longer the
+     * grouping the host is showing, and the pane would then describe a different result
+     * from the one its window is titled after -- listing, say, six ground-truth cell
+     * types beside four cluster labels while claiming to show one seven-cluster run.
+     *
+     * @param entries       the selected project-image entries (may be null/empty)
+     * @param preferredAxes embedding column names, or null to auto-detect as before
+     * @param labelOverride imageId + detection -&gt; the group to show it as; null for
+     *                      a cell the grouping does not cover, and null overall to read
+     *                      each object's own classification as before
+     */
+    public void initializeForHost(List<ProjectImageEntry<BufferedImage>> entries,
+                                  String[] preferredAxes,
+                                  java.util.function.BiFunction<String, PathObject, PathClass> labelOverride) {
+        this.hostLabelOverride = labelOverride;
         this.hostPreferredAxes = (preferredAxes == null) ? null : preferredAxes.clone();
         this.hostMode = true;
         this.selectedEntries = (entries == null) ? null : new java.util.ArrayList<>(entries);
@@ -917,7 +944,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
                         1,
                         Cluster3DNavPreferences.representativesPerClusterProperty()
                                 .get()),
-                Cluster3DNavPreferences.subsampleSeedProperty().get());
+                Cluster3DNavPreferences.subsampleSeedProperty().get())
+                .withLabelOverride(hostLabelOverride);
 
         setBusy(true, pm ? "Reading detections across selected images..." : "Reading detections...");
         cloudView.setEmptyMessage(null);

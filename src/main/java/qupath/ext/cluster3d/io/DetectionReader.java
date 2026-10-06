@@ -16,6 +16,7 @@ import java.awt.Shape;
 import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.function.BiFunction;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -120,11 +121,38 @@ public final class DetectionReader {
         public final int cellLimit;
         public final int minPerCluster;
         public final long seed;
+        /**
+         * Supplies each cell's group instead of its own {@code PathClass}.
+         * Null means read the classification off the object, as before.
+         *
+         * <p>A host that is displaying a stored grouping -- a clustering result
+         * reopened from disk, say -- needs this: the cells on screen carry
+         * whatever classification they happen to carry now, which after any
+         * later run is not the grouping the host is showing.
+         */
+        public final BiFunction<String, PathObject, PathClass> labelOverride;
 
         public ReadOptions(int cellLimit, int minPerCluster, long seed) {
+            this(cellLimit, minPerCluster, seed, null);
+        }
+
+        public ReadOptions(int cellLimit, int minPerCluster, long seed,
+                           BiFunction<String, PathObject, PathClass> labelOverride) {
             this.cellLimit = cellLimit;
             this.minPerCluster = minPerCluster;
             this.seed = seed;
+            this.labelOverride = labelOverride;
+        }
+
+        /**
+         * A copy of these options that takes each cell's group from {@code f}.
+         *
+         * @param f imageId + detection -> the group to show it as, or null for
+         *          the object's own classification
+         * @return the new options
+         */
+        public ReadOptions withLabelOverride(BiFunction<String, PathObject, PathClass> f) {
+            return new ReadOptions(cellLimit, minPerCluster, seed, f);
         }
 
         /** No limit -- read every cell. */
@@ -328,6 +356,7 @@ public final class DetectionReader {
         List<Double> ys = new ArrayList<>();
         List<Integer> classIdx = new ArrayList<>();
         Map<PathClass, Integer> classOf = new LinkedHashMap<>(); // per-image cluster index
+        ReadOptions o = opts == null ? ReadOptions.UNLIMITED : opts;
 
         for (PathObject det : data.getHierarchy().getDetectionObjects()) {
             ROI roi = det.getROI();
@@ -341,7 +370,9 @@ public final class DetectionReader {
                 m.put(name, v == null ? Double.NaN : v.doubleValue());
             }
             double half = 0.5 * Math.max(roi.getBoundsWidth(), roi.getBoundsHeight());
-            PathClass pc = det.getPathClass();
+            PathClass pc = o.labelOverride == null
+                    ? det.getPathClass()
+                    : o.labelOverride.apply(imageId, det);
             PathClass key = (pc == PathClass.getNullClass()) ? null : pc;
             // Precompute the segmentation outline (flattened, full-res px) + packed class color
             // once here on the single read thread -- so the crop service can draw it later
@@ -357,7 +388,6 @@ public final class DetectionReader {
         }
 
         int n = recs.size();
-        ReadOptions o = opts == null ? ReadOptions.UNLIMITED : opts;
         if (o.cellLimit <= 0 || n <= o.cellLimit) {
             outRecords.addAll(recs);
             outMaps.addAll(maps);
