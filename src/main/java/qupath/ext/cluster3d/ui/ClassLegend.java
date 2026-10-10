@@ -17,6 +17,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
+import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -146,13 +147,29 @@ public class ClassLegend extends VBox {
                 swatch,
                 new javafx.scene.control.Tooltip(
                         "Color comes from this class in QuPath. Change it in the class list to recolor the cloud."));
-        Label name = new Label(data.classDisplayName(classIndex));
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        // The name absorbs the squeeze and elides from the LEFT, because the
+        // tail is what distinguishes one row from another. A host that
+        // namespaces its classes -- QP-CAT prefixes every applied class with
+        // the result name, "auto_20260927_015057_hdbscan: Cluster 0" -- made
+        // all seven rows of this ~160 px column read "auto_20260927_015057..."
+        // with the cluster number and the count clipped off the right, which is
+        // least readable immediately after the action that fills it. Eliding
+        // rather than parsing the name: this is a generic viewer and the
+        // "<namespace>: <class>" shape is one host's convention, not a contract.
+        Label name = new Label(className);
+        name.setTextOverrun(OverrunStyle.LEADING_ELLIPSIS);
+        name.setTooltip(new javafx.scene.control.Tooltip(className));
+        name.setMinWidth(0);
+        name.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(name, Priority.ALWAYS);
+
         Label count = new Label(String.valueOf(data.classCounts[classIndex]));
         count.setStyle("-fx-text-fill: -fx-mid-text-color;");
+        // Never squeezed out: the count is how you check an apply landed on the
+        // number of cells you expected.
+        count.setMinWidth(Region.USE_PREF_SIZE);
 
-        HBox row = new HBox(6, cb, swatch, name, spacer, count);
+        HBox row = new HBox(6, cb, swatch, name, count);
         row.setAlignment(Pos.CENTER_LEFT);
         return row;
     }
