@@ -605,13 +605,32 @@ public class PointCloudView extends Pane {
     // ---------------- draw ----------------
 
     private void redraw() {
-        GraphicsContext gc = canvas.getGraphicsContext2D();
+        // Background: a user-chosen color if set, else the theme-aware default.
+        Color bg = backgroundColor != null
+                ? backgroundColor
+                : (isDarkTheme() ? Color.rgb(40, 40, 43) : Color.rgb(250, 250, 250));
+        paint(canvas.getGraphicsContext2D(), canvas.getWidth(), canvas.getHeight(), bg, true);
+    }
+
+    /**
+     * The cloud as shown, redrawn at a higher resolution for saving as a figure. It reads
+     * white unless the user chose a background, whatever theme QuPath is using.
+     *
+     * @param scale image pixels per screen pixel
+     * @return the image
+     */
+    Image exportImage(double scale) {
         double w = canvas.getWidth();
         double h = canvas.getHeight();
-        boolean dark = isDarkTheme();
-        // Background: a user-chosen color if set, else the theme-aware default.
-        Color bg =
-                backgroundColor != null ? backgroundColor : (dark ? Color.rgb(40, 40, 43) : Color.rgb(250, 250, 250));
+        Canvas sharp = new Canvas(Math.ceil(w * scale), Math.ceil(h * scale));
+        GraphicsContext gc = sharp.getGraphicsContext2D();
+        gc.scale(scale, scale);
+        paint(gc, w, h, backgroundColor != null ? backgroundColor : Color.WHITE, false);
+        return sharp.snapshot(null, null);
+    }
+
+    /** Paint the cloud. Only a live paint may start crop loads or touch the banner. */
+    private void paint(GraphicsContext gc, double w, double h, Color bg, boolean live) {
         // Foreground (text/tripod) derived from background luminance so it stays readable on any color.
         double bgLum = 0.299 * bg.getRed() + 0.587 * bg.getGreen() + 0.114 * bg.getBlue();
         Color fg = bgLum < 0.5 ? Color.rgb(220, 220, 220) : Color.rgb(40, 40, 40);
@@ -729,7 +748,7 @@ public class PointCloudView extends Pane {
 
         // Enqueue pending crop loads nearest the cursor (or canvas center) first, up to the
         // per-frame + global in-flight caps.
-        if (!pending.isEmpty()) {
+        if (live && !pending.isEmpty()) {
             double focusX = Double.isNaN(lastCursorX) ? w / 2 : lastCursorX;
             double focusY = Double.isNaN(lastCursorY) ? h / 2 : lastCursorY;
             pending.sort((a, b) -> Double.compare(
@@ -745,7 +764,9 @@ public class PointCloudView extends Pane {
             }
         }
         // Populating banner: still loading while any selected cell is uncached OR loads are in flight.
-        updatePopulating(!pending.isEmpty() || !loadingIndices.isEmpty());
+        if (live) {
+            updatePopulating(!pending.isEmpty() || !loadingIndices.isEmpty());
+        }
 
         // Selection ring.
         if (selectedIndex >= 0 && selectedIndex < n && classVisible(data.classIdx[selectedIndex])) {

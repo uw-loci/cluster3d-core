@@ -12,9 +12,11 @@
 package qupath.ext.cluster3d.ui;
 
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.ReadOnlyStringProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -23,6 +25,7 @@ import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -31,6 +34,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -81,6 +85,14 @@ import qupath.lib.projects.ProjectImageEntry;
  */
 public class Cluster3DNavigatorPane extends BorderPane {
 
+    /** Room kept for the class list when the preview is open: about three rows. */
+    private static final double LEGEND_MIN_HEIGHT = 100;
+    /** Height of everything in the open preview except the crop. */
+    private static final double PREVIEW_CHROME_HEIGHT = 130;
+
+    private static final double PREVIEW_MIN_HEIGHT = 60;
+    private static final double PREVIEW_MAX_HEIGHT = 220;
+
     private static final Logger logger = LoggerFactory.getLogger(Cluster3DNavigatorPane.class);
 
     private final QuPathGUI qupath;
@@ -118,6 +130,8 @@ public class Cluster3DNavigatorPane extends BorderPane {
     private boolean limited = false;
     private final ImageView previewView = new ImageView();
     private final Label previewCaption = new Label("");
+    private final TitledPane previewPane = new TitledPane();
+    private boolean previewOpened = false;
     private final Button updateFromViewerButton = new Button("Update from viewer");
     /** Offered only when a host supplies per-class channels; see setPreviewChannels. */
     private CheckBox perClassChannelsCheck;
@@ -140,6 +154,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
     private String[] hostPreferredAxes;
     /** Host-supplied grouping, or null to read each object's own classification. */
     private java.util.function.BiFunction<String, PathObject, PathClass> hostLabelOverride;
+
     private PointCloudData data;
     private int lastPreviewIndex = -1; // last cell shown in the Cell preview panel
     private boolean suppressAxisEvents = false;
@@ -245,9 +260,10 @@ public class Cluster3DNavigatorPane extends BorderPane {
      *                      a cell the grouping does not cover, and null overall to read
      *                      each object's own classification as before
      */
-    public void initializeForHost(List<ProjectImageEntry<BufferedImage>> entries,
-                                  String[] preferredAxes,
-                                  java.util.function.BiFunction<String, PathObject, PathClass> labelOverride) {
+    public void initializeForHost(
+            List<ProjectImageEntry<BufferedImage>> entries,
+            String[] preferredAxes,
+            java.util.function.BiFunction<String, PathObject, PathClass> labelOverride) {
         this.hostLabelOverride = labelOverride;
         this.hostPreferredAxes = (preferredAxes == null) ? null : preferredAxes.clone();
         this.hostMode = true;
@@ -480,8 +496,17 @@ public class Cluster3DNavigatorPane extends BorderPane {
         // Center: canvas + busy overlay.
         cloudView.setPrefSize(700, 520);
         legend.setOnChange(this::onLegendChanged);
-        cloudView.setOnPointClicked(this::loadPreview);
-        cloudView.setOnPointHovered(this::loadPreview);
+        cloudView.setOnPointClicked(index -> {
+            if (!previewOpened) {
+                previewPane.setExpanded(true);
+            }
+            loadPreview(index);
+        });
+        cloudView.setOnPointHovered(index -> {
+            if (previewPane.isExpanded()) {
+                loadPreview(index);
+            }
+        });
         // Crop source for the in-cloud VEST-style thumbnails (loaded off the FX thread).
         cloudView.setCropSource(
                 cropService::readCrop,
@@ -510,10 +535,7 @@ public class Cluster3DNavigatorPane extends BorderPane {
         // Right: legend + cell preview (crop loads on click by default).
         previewView.setPreserveRatio(true);
         previewView.setFitWidth(220);
-        previewView.setFitHeight(220);
         Tooltip.install(previewView, new Tooltip("Image crop of the last cell you clicked or hovered."));
-        Label previewHeader = new Label("Cell preview");
-        previewHeader.setStyle("-fx-font-weight: bold;");
         updateFromViewerButton.setTooltip(new Tooltip(
                 "Re-render the cell preview using the viewer's current channel visibility and brightness/contrast."));
         updateFromViewerButton.setDisable(true); // enabled once a cell has been previewed
@@ -532,11 +554,35 @@ public class Cluster3DNavigatorPane extends BorderPane {
         perClassChannelsCheck.setManaged(false);
         perClassChannelsCheck.selectedProperty().addListener((o, a, b) -> refreshPreviewFromViewer());
 
-        VBox previewBox =
-                new VBox(4, previewHeader, previewView, previewCaption, perClassChannelsCheck, updateFromViewerButton);
+        VBox previewBox = new VBox(4, previewView, previewCaption, perClassChannelsCheck, updateFromViewerButton);
         previewBox.setPadding(new Insets(6));
-        VBox right = new VBox(6, legend, previewBox);
+        // Folded until the first click, so the class list has the column until then.
+        previewPane.setText("Cell preview");
+        // A host may give this column little height, so the contents scroll rather than
+        // force the whole pane past the space it was given.
+        ScrollPane previewScroll = new ScrollPane(previewBox);
+        previewScroll.setFitToWidth(true);
+        previewScroll.setStyle("-fx-background-color: transparent;");
+        previewScroll
+                .prefViewportHeightProperty()
+                .bind(previewView.fitHeightProperty().add(90));
+        // Keeps the crop in view; the class list gives up the room.
+        previewScroll
+                .minViewportHeightProperty()
+                .bind(previewView.fitHeightProperty().add(6));
+        previewPane.setContent(previewScroll);
+        previewPane.setAnimated(false);
+        previewPane.setExpanded(false);
+        previewPane.expandedProperty().addListener((o, a, b) -> previewOpened |= b);
+        VBox right = new VBox(6, legend, previewPane);
         VBox.setVgrow(legend, Priority.ALWAYS);
+        VBox.setVgrow(previewPane, Priority.SOMETIMES);
+        legend.setMinHeight(LEGEND_MIN_HEIGHT);
+        // The crop gives way first, so an open preview leaves the class list usable.
+        previewView
+                .fitHeightProperty()
+                .bind(Bindings.createDoubleBinding(
+                        () -> previewImageHeight(right.getHeight()), right.heightProperty()));
         right.setPrefWidth(260);
         right.setMinWidth(260);
         setRight(right);
@@ -552,6 +598,44 @@ public class Cluster3DNavigatorPane extends BorderPane {
         bottomBar.setAlignment(Pos.CENTER_LEFT);
         bottomBar.setPadding(new Insets(6));
         setBottom(bottomBar);
+    }
+
+    /**
+     * Height for the preview crop in a side column of this height.
+     *
+     * @param columnHeight height of the side column
+     * @return the crop height, from {@link #PREVIEW_MIN_HEIGHT} to {@link #PREVIEW_MAX_HEIGHT}
+     */
+    static double previewImageHeight(double columnHeight) {
+        double room = columnHeight - LEGEND_MIN_HEIGHT - PREVIEW_CHROME_HEIGHT;
+        return Math.max(PREVIEW_MIN_HEIGHT, Math.min(PREVIEW_MAX_HEIGHT, room));
+    }
+
+    /**
+     * The cloud beside a legend of the classes it shows, for saving as a figure.
+     *
+     * @param scale image pixels per screen pixel
+     * @return a node in a scene of its own, to snapshot at that scale
+     */
+    public Node exportView(double scale) {
+        List<FigureLegend.Entry> entries = new ArrayList<>();
+        boolean[] shown = legend.getVisibleMask();
+        int total = data == null ? 0 : data.classCount();
+        String[] names = new String[total];
+        for (int i = 0; i < total; i++) {
+            names[i] = data.classDisplayName(i);
+        }
+        for (int i : ClassLegend.displayOrder(names)) {
+            if (i < shown.length && shown[i]) {
+                Color color = data.palette[i] == null ? Color.GRAY : data.palette[i];
+                entries.add(new FigureLegend.Entry(color, names[i], data.classCounts[i]));
+            }
+        }
+        String title = entries.size() == total
+                ? "Classes (" + total + ")"
+                : "Classes (" + entries.size() + " of " + total + ")";
+        return FigureLegend.figure(
+                cloudView.exportImage(scale), cloudView.getWidth(), cloudView.getHeight(), title, entries);
     }
 
     private TitledPane buildDisplayOptions() {
@@ -939,12 +1023,12 @@ public class Cluster3DNavigatorPane extends BorderPane {
         // Per-image cell limit + seed from prefs; the guaranteed per-cluster minimum reuses
         // the representatives-per-cluster control (floored at 1 so no cluster is dropped).
         final DetectionReader.ReadOptions opts = new DetectionReader.ReadOptions(
-                Cluster3DNavPreferences.cellLimitPerImageProperty().get(),
-                Math.max(
-                        1,
-                        Cluster3DNavPreferences.representativesPerClusterProperty()
-                                .get()),
-                Cluster3DNavPreferences.subsampleSeedProperty().get())
+                        Cluster3DNavPreferences.cellLimitPerImageProperty().get(),
+                        Math.max(
+                                1,
+                                Cluster3DNavPreferences.representativesPerClusterProperty()
+                                        .get()),
+                        Cluster3DNavPreferences.subsampleSeedProperty().get())
                 .withLabelOverride(hostLabelOverride);
 
         setBusy(true, pm ? "Reading detections across selected images..." : "Reading detections...");
