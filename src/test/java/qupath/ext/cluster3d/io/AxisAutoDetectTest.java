@@ -165,4 +165,38 @@ class AxisAutoDetectTest {
                 .isEmpty();
         assertThat(AxisAutoDetect.parseComponent("Nucleus: Circularity")).isNull();
     }
+
+    /** Seen 2026-11-02: X and Y from the 2D UMAP, Z from the 3D one, labeled as one UMAP. */
+    @Test
+    void neverMixesComponentsOfTwoEmbeddings() {
+        List<String> names = List.of(
+                "UMAP1",
+                "UMAP2",
+                "QPCAT 2D UMAP1",
+                "QPCAT 2D UMAP2",
+                "QPCAT 3D UMAP1",
+                "QPCAT 3D UMAP2",
+                "QPCAT 3D UMAP3");
+        assertThat(AxisAutoDetect.detect(names)).containsExactly("QPCAT 3D UMAP1", "QPCAT 3D UMAP2", "QPCAT 3D UMAP3");
+        assertThat(AxisAutoDetect.detectPair(names)).containsExactly("UMAP1", "UMAP2");
+        assertThat(AxisAutoDetect.detect(List.of("QPCAT 2D UMAP1", "QPCAT 2D UMAP2", "QPCAT 3D UMAP3")))
+                .isEmpty();
+    }
+
+    @Test
+    void thePairPrefersATrue2dEmbeddingOverTwoAxesOfA3dOne() {
+        List<String> names =
+                List.of("QPCAT 3D UMAP1", "QPCAT 3D UMAP2", "QPCAT 3D UMAP3", "QPCAT 2D UMAP1", "QPCAT 2D UMAP2");
+        assertThat(AxisAutoDetect.detectPair(names)).containsExactly("QPCAT 2D UMAP1", "QPCAT 2D UMAP2");
+    }
+
+    @Test
+    void twoOfThreeLooksOnlyAtTheSameEmbedding() {
+        List<String> names =
+                List.of("QPCAT 2D UMAP1", "QPCAT 2D UMAP2", "QPCAT 3D UMAP1", "QPCAT 3D UMAP2", "QPCAT 3D UMAP3");
+        assertThat(AxisAutoDetect.isTwoOfThree(names, "QPCAT 2D UMAP1", "QPCAT 2D UMAP2"))
+                .isFalse();
+        assertThat(AxisAutoDetect.isTwoOfThree(names, "QPCAT 3D UMAP1", "QPCAT 3D UMAP2"))
+                .isTrue();
+    }
 }

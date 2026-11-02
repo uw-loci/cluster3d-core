@@ -15,7 +15,11 @@ package qupath.ext.cluster3d.io;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -141,77 +145,90 @@ public final class AxisAutoDetect {
         }
         String[] px = parseComponent(xName);
         String[] py = parseComponent(yName);
-        if (px == null || py == null || !px[0].equals(py[0])) {
-            return false; // not both embedding components of one family
+        if (px == null || py == null || !px[0].equals(py[0]) || !px[2].equals(py[2])) {
+            return false; // not both components of one embedding
         }
-        String baseRegex = baseRegexFor(px[0]);
-        if (baseRegex == null) {
-            return false;
-        }
-        // A third-or-higher component of this family present -> the embedding is >= 3D.
+        // A third-or-higher component of this embedding present -> it is >= 3D. A 3D
+        // embedding stored beside a 2D one does not make the 2D one a slice.
         for (String name : names) {
             if (name == null) {
                 continue;
             }
             String[] pc = parseComponent(name);
-            if (pc != null && pc[0].equals(px[0]) && Integer.parseInt(pc[1]) >= 3) {
+            if (pc != null && pc[0].equals(px[0]) && pc[2].equals(px[2]) && Integer.parseInt(pc[1]) >= 3) {
                 return true;
             }
         }
         return false;
     }
 
-    /** Parse a name into {familyLabel, componentDigit} (e.g. {"UMAP", "2"}), or null if it is not one. */
+    /**
+     * Parse a name into {familyLabel, componentDigit, embeddingKey} (e.g. {"UMAP", "2",
+     * "qpcat2dumap"}), or null if it is not one. Names share an embedding key only when
+     * everything but the component number matches, ignoring case and separators.
+     */
     static String[] parseComponent(String name) {
         if (name == null) {
             return null;
         }
         for (String[] family : FAMILIES) {
-            Pattern p = Pattern.compile(
-                    "^\\s*" + OPTIONAL_TOOL_PREFIX + family[1] + OPTIONAL_RUN_NAME + "[_\\-\\s]?0*([0-9]+)\\s*$",
-                    Pattern.CASE_INSENSITIVE);
-            Matcher m = p.matcher(name);
-            if (m.matches()) {
-                return new String[] {family[0], String.valueOf(Integer.parseInt(m.group(1)))};
+            String[] parsed = parse(name, family[1]);
+            if (parsed != null) {
+                return new String[] {family[0], parsed[1], parsed[0]};
             }
         }
         return null;
     }
 
-    private static String baseRegexFor(String familyLabel) {
-        for (String[] family : FAMILIES) {
-            if (family[0].equals(familyLabel)) {
-                return family[1];
-            }
+    /** {embeddingKey, componentDigit} for a name of one family, or null. */
+    private static String[] parse(String name, String baseRegex) {
+        Pattern p = Pattern.compile(
+                "^\\s*(" + OPTIONAL_TOOL_PREFIX + baseRegex + OPTIONAL_RUN_NAME + ")[_\\-\\s]?0*([0-9]+)\\s*$",
+                Pattern.CASE_INSENSITIVE);
+        Matcher m = p.matcher(name);
+        if (!m.matches()) {
+            return null;
         }
-        return null;
+        String key = m.group(1).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        return new String[] {key, String.valueOf(Integer.parseInt(m.group(2)))};
     }
 
-    /** Find components 1..count of a family, or null if any is missing. */
+    /**
+     * Components 1..count of ONE embedding of a family, or null when no embedding has
+     * them all. Names are grouped by embedding first, so "QPCAT 2D UMAP1" and
+     * "QPCAT 3D UMAP3" are never paired. An embedding with exactly {@code count}
+     * components is preferred (a 3D run for the 3D view, a 2D run for the 2D view);
+     * otherwise the first complete one, in the order the names came.
+     */
     private static List<String> findComponents(List<String> names, String baseRegex, int count) {
-        String[] found = new String[count];
-        for (int comp = 1; comp <= count; comp++) {
-            Pattern p = Pattern.compile(
-                    "^\\s*" + OPTIONAL_TOOL_PREFIX + baseRegex + OPTIONAL_RUN_NAME + "[_\\-\\s]?0*" + comp + "\\s*$",
-                    Pattern.CASE_INSENSITIVE);
-            for (String name : names) {
-                if (name == null) {
-                    continue;
-                }
-                Matcher m = p.matcher(name);
-                if (m.matches()) {
-                    found[comp - 1] = name;
-                    break;
-                }
+        Map<String, Map<Integer, String>> embeddings = new LinkedHashMap<>();
+        for (String name : names) {
+            if (name == null) {
+                continue;
             }
-            if (found[comp - 1] == null) {
-                return null;
+            String[] parsed = parse(name, baseRegex);
+            if (parsed != null) {
+                embeddings
+                        .computeIfAbsent(parsed[0], k -> new HashMap<>())
+                        .putIfAbsent(Integer.parseInt(parsed[1]), name);
             }
         }
-        List<String> tuple = new ArrayList<>(count);
-        for (String f : found) {
-            tuple.add(f);
+        List<String> fallback = null;
+        for (Map<Integer, String> components : embeddings.values()) {
+            List<String> tuple = new ArrayList<>(count);
+            for (int comp = 1; comp <= count && components.containsKey(comp); comp++) {
+                tuple.add(components.get(comp));
+            }
+            if (tuple.size() < count) {
+                continue;
+            }
+            if (Collections.max(components.keySet()) == count) {
+                return tuple;
+            }
+            if (fallback == null) {
+                fallback = tuple;
+            }
         }
-        return tuple;
+        return fallback;
     }
 }
