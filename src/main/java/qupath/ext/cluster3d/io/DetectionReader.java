@@ -16,7 +16,6 @@ import java.awt.Shape;
 import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
-import java.util.function.BiFunction;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import javafx.scene.paint.Color;
 import org.slf4j.Logger;
@@ -136,8 +136,8 @@ public final class DetectionReader {
             this(cellLimit, minPerCluster, seed, null);
         }
 
-        public ReadOptions(int cellLimit, int minPerCluster, long seed,
-                           BiFunction<String, PathObject, PathClass> labelOverride) {
+        public ReadOptions(
+                int cellLimit, int minPerCluster, long seed, BiFunction<String, PathObject, PathClass> labelOverride) {
             this.cellLimit = cellLimit;
             this.minPerCluster = minPerCluster;
             this.seed = seed;
@@ -370,9 +370,7 @@ public final class DetectionReader {
                 m.put(name, v == null ? Double.NaN : v.doubleValue());
             }
             double half = 0.5 * Math.max(roi.getBoundsWidth(), roi.getBoundsHeight());
-            PathClass pc = o.labelOverride == null
-                    ? det.getPathClass()
-                    : o.labelOverride.apply(imageId, det);
+            PathClass pc = o.labelOverride == null ? det.getPathClass() : o.labelOverride.apply(imageId, det);
             PathClass key = (pc == PathClass.getNullClass()) ? null : pc;
             // Precompute the segmentation outline (flattened, full-res px) + packed class color
             // once here on the single read thread -- so the crop service can draw it later

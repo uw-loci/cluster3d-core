@@ -7,7 +7,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
-
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Scene;
@@ -41,8 +40,7 @@ class ClassLegendRowLayoutTest {
     /** Width of the right panel the legend sits in (Cluster3DNavigatorPane). */
     private static final double PANEL_WIDTH = 260;
 
-    private static final String LONG_NAME =
-            "auto_20260927_015057_hdbscan: Cluster 0";
+    private static final String LONG_NAME = "auto_20260927_015057_hdbscan: Cluster 0";
 
     private static boolean fxUp;
 
@@ -74,13 +72,24 @@ class ClassLegendRowLayoutTest {
         for (int i = 0; i < n; i++) {
             classes[i] = PathClass.fromString(classNames[i]);
             palette[i] = Color.CORNFLOWERBLUE;
-            counts[i] = 1000 + i;      // 4 digits, as a real run produces
+            counts[i] = 1000 + i; // 4 digits, as a real run produces
         }
         return new PointCloudData(
-                new float[0], new float[0], new float[0],
-                new double[0], new double[0], new double[0],
-                new int[0], List.of(classes), palette, counts,
-                null, "x", "y", "z", 0);
+                new float[0],
+                new float[0],
+                new float[0],
+                new double[0],
+                new double[0],
+                new double[0],
+                new int[0],
+                List.of(classes),
+                palette,
+                counts,
+                null,
+                "x",
+                "y",
+                "z",
+                0);
     }
 
     /** The legend, laid out at the width it really gets. */
@@ -143,8 +152,7 @@ class ClassLegendRowLayoutTest {
             // 13 px against a preferred 33 -- present, and rendered as an
             // ellipsis. Measured on the pre-fix layout at this exact width.
             assertThat(count.getWidth())
-                    .as("count '%s' must be drawn at its natural width, not squeezed",
-                            count.getText())
+                    .as("count '%s' must be drawn at its natural width, not squeezed", count.getText())
                     .isGreaterThanOrEqualTo(count.prefWidth(-1) - 0.5);
             assertThat(count.getBoundsInParent().getMaxX())
                     .as("count's right edge must stay inside the row")

@@ -249,7 +249,9 @@ public class ClassLegend extends VBox {
         HBox.setHgrow(name, Priority.ALWAYS);
 
         Label count = new Label(String.valueOf(data.classCounts[classIndex]));
-        count.setStyle("-fx-text-fill: -fx-mid-text-color;");
+        // Dimmed from the theme's own text color: -fx-mid-text-color is meant for
+        // control faces and all but vanished on QuPath's dark background.
+        count.setOpacity(0.7);
         // Never squeezed out: the count is how you check an apply landed on the
         // number of cells you expected.
         count.setMinWidth(Region.USE_PREF_SIZE);
