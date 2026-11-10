@@ -12,6 +12,7 @@
 
 package qupath.ext.cluster3d.ui;
 
+import java.util.Locale;
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.stage.Window;
@@ -30,17 +31,17 @@ final class ThemeUtils {
     static boolean isDark(Scene scene) {
         if (scene != null) {
             for (String s : scene.getStylesheets()) {
-                if (s != null && s.toLowerCase().contains("dark")) {
+                if (s != null && s.toLowerCase(Locale.ROOT).contains("dark")) {
                     return true;
                 }
             }
             String ua = scene.getUserAgentStylesheet();
-            if (ua != null && ua.toLowerCase().contains("dark")) {
+            if (ua != null && ua.toLowerCase(Locale.ROOT).contains("dark")) {
                 return true;
             }
         }
         String appUa = Application.getUserAgentStylesheet();
-        return appUa != null && appUa.toLowerCase().contains("dark");
+        return appUa != null && appUa.toLowerCase(Locale.ROOT).contains("dark");
     }
 
     static boolean isDark(Window window) {
